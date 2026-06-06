@@ -223,7 +223,7 @@ List all visible variables (locals and globals) with their types and values:
 :ok vars
 ```
 
-Type characters: `i`=int, `s`=short, `c`=char, `l`=long, `I`=unsigned int, `S`=unsigned short, `C`=unsigned char, `L`=unsigned long, `f`=float, `p`=pointer.
+Type characters: `i`=int, ``=short, `c`=char, `l`=long, `I`=unsigned int, `S`=unsigned short, `C`=unsigned char, `L`=unsigned long, `f`=float, `p`=pointer.
 
 ### Modifying Variables
 
@@ -293,7 +293,7 @@ picoc>
 
 ### Debug Command Reference
 
-| Command | Description |
+| Command |描述|
 |---------|-------------|
 | `:bkpt <file> <line>` | Set breakpoint |
 | `:bkptclear <file> <line>` | Clear breakpoint |
@@ -307,7 +307,7 @@ picoc>
 
 ### Host → Device Commands
 
-| Command | Description |
+| Command |描述|
 |---------|-------------|
 | `:load [size]` | Enter file upload mode. Optional `size` for buffer pre-check. |
 | `:end` | Execute uploaded source |
@@ -324,7 +324,7 @@ picoc>
 
 ### Device → Host Responses
 
-| Response | Description |
+| Response |描述|
 |----------|-------------|
 | `:ok [data]` | Success. Data: `ready`, `bkpt`, `bkptclear`, `eval`, `set`, `vars` |
 | `:err <msg>` | Error with message |
@@ -365,7 +365,7 @@ picoc>
 
 ## Related Projects
 
-- [RICE v1](https://github.com/mosking128/rice-v1) — Stable bare-metal release, recommended for production use
+- [RICE v1](https://github.com/mosking128/rice-v1) — Bare-metal release
 
 ## License
 
