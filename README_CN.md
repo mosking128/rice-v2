@@ -223,7 +223,7 @@ picoc>
 :ok vars
 ```
 
-类型标识符：`i`=int, `s`=short, `c`=char, `l`=long, `I`=unsigned int, `S`=unsigned short, `C`=unsigned char, `L`=unsigned long, `f`=float, `p`=pointer。
+类型标识符：`i`=int, ``=short, `c`=char, `l`=long, `I`=unsigned int, `S`=unsigned short, `C`=unsigned char, `L`=unsigned long, `f`=float, `p`=pointer。
 
 ### 修改变量
 
@@ -365,7 +365,7 @@ picoc>
 
 ## 相关项目
 
-- [RICE v1](https://github.com/mosking128/rice-v1) — 稳定裸机版本，推荐生产使用
+- [RICE v1](https://github.com/mosking128/rice-v1) — 第一代裸机版本
 
 ## 许可证
 
