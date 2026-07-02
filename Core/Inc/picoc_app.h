@@ -19,8 +19,11 @@
 extern "C" {
 #endif
 
-/* 初始化 PicoC 应用：创建解释器实例，重置缓冲区，显示 REPL 提示符 */
+/* 初始化 PicoC 应用：创建解释器实例，默认进入 UDP 桥接模式 */
 void PicocApp_Init(void);
+
+/* 从 UDP 桥接模式切换到 RICE REPL 模式，显示启动横幅和提示符 */
+void PicocApp_ActivateRice(void);
 
 /* 请求中断正在执行的 PicoC 脚本（供 serialTask 收到 :abort 时调用） */
 void PicocApp_Abort(void);

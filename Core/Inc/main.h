@@ -57,6 +57,18 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define CH394Q_SCK_Pin GPIO_PIN_2
+#define CH394Q_SCK_GPIO_Port GPIOE
+#define CH394Q_MISO_Pin GPIO_PIN_5
+#define CH394Q_MISO_GPIO_Port GPIOE
+#define CH394Q_MOSI_Pin GPIO_PIN_6
+#define CH394Q_MOSI_GPIO_Port GPIOE
+#define CH394Q_SCS_Pin GPIO_PIN_4
+#define CH394Q_SCS_GPIO_Port GPIOA
+#define CH394Q_INT_Pin GPIO_PIN_4
+#define CH394Q_INT_GPIO_Port GPIOB
+#define CH394Q_RSTB_Pin GPIO_PIN_5
+#define CH394Q_RSTB_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

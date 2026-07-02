@@ -26,6 +26,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "CH394Q_NET.h"
 #include "serial_app.h"
 #include "picoc_app.h"
 #include "task_msg.h"
@@ -72,10 +73,22 @@ const osThreadAttr_t picocTask_attributes = {
   .stack_size = 8192 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for udpTask */
+osThreadId_t udpTaskHandle;
+const osThreadAttr_t udpTask_attributes = {
+  .name = "udpTask",
+  .stack_size = 2048 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
 /* Definitions for uartQuene */
 osMessageQueueId_t uartQueneHandle;
 const osMessageQueueAttr_t uartQuene_attributes = {
   .name = "uartQuene"
+};
+/* Definitions for udpQuene */
+osMessageQueueId_t udpQueneHandle;
+const osMessageQueueAttr_t udpQuene_attributes = {
+  .name = "udpQuene"
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -86,6 +99,7 @@ const osMessageQueueAttr_t uartQuene_attributes = {
 /*void StartDefaultTask(void *argument);*/
 void StartSerialTask(void *argument);
 void StartPicocTask(void *argument);
+void StartUdpTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -114,6 +128,8 @@ void MX_FREERTOS_Init(void) {
   /* Create the queue(s) */
   /* creation of uartQuene */
   uartQueneHandle = osMessageQueueNew (16, sizeof(TaskMsg), &uartQuene_attributes);
+  /* creation of udpQuene */
+  udpQueneHandle = osMessageQueueNew (16, sizeof(TaskMsg), &udpQuene_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -126,8 +142,12 @@ void MX_FREERTOS_Init(void) {
   /* creation of serialTask */
   serialTaskHandle = osThreadNew(StartSerialTask, NULL, &serialTask_attributes);
 
+  /* creation of udpTask */
+  udpTaskHandle = osThreadNew(StartUdpTask, NULL, &udpTask_attributes);
+
   /* creation of picocTask */
   picocTaskHandle = osThreadNew(StartPicocTask, NULL, &picocTask_attributes);
+  vTaskSuspend(picocTaskHandle);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -146,7 +166,6 @@ void MX_FREERTOS_Init(void) {
   * @retval None
   */
 /* USER CODE END Header_StartDefaultTask */
-/* REMOVED: defaultTask no longer needed */
 /*void StartDefaultTask(void *argument)
 {
   for(;;)
@@ -186,20 +205,36 @@ void StartSerialTask(void *argument)
       }
       if (PicocApp_ProcessChars(buf, len, &msg) != 0)
       {
-        osMessageQueuePut(uartQueneHandle, &msg, 0U, 0U);
+        switch (msg.type)
+        {
+          case MSG_UDP_LINE:
+            if (udpQueneHandle != NULL)
+              (void)osMessageQueuePut(udpQueneHandle, &msg, 0U, 0U);
+            break;
+          case MSG_RICE_ENABLE:
+            PicocApp_ActivateRice();
+            if (udpTaskHandle != NULL)
+              vTaskSuspend(udpTaskHandle);
+            if (picocTaskHandle != NULL)
+              vTaskResume(picocTaskHandle);
+            break;
+          default:
+            (void)osMessageQueuePut(uartQueneHandle, &msg, 0U, 0U);
+            break;
+        }
       }
     }
   }
   /* USER CODE END StartSerialTask */
 }
 
-/* USER CODE BEGIN Header_StartPicocTask */
+/* USER CODE BEGIN Header_StartTask03 */
 /**
 * @brief Function implementing the picocTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartPicocTask */
+/* USER CODE END Header_StartTask03 */
 void StartPicocTask(void *argument)
 {
   /* USER CODE BEGIN StartPicocTask */
@@ -234,8 +269,57 @@ void StartPicocTask(void *argument)
   /* USER CODE END StartPicocTask */
 }
 
+/* USER CODE BEGIN Header_StartTask04 */
+/**
+* @brief Function implementing the udpTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask04 */
+void StartUdpTask(void *argument)
+{
+  /* USER CODE BEGIN StartUdpTask */
+  TaskMsg msg;
+  uint8_t rxbuf[256];
+  (void)argument;
+
+  for(;;)
+  {
+    while (udpQueneHandle != NULL && osMessageQueueGet(udpQueneHandle, &msg, NULL, 0U) == osOK)
+    {
+      if (msg.type == MSG_UDP_LINE && msg.len > 0U)
+      {
+        msg.data[msg.len] = '\0';
+        CH394Q_UDPSendData(0, (const uint8_t *)msg.data, msg.len);
+      }
+    }
+
+    if (HAL_GPIO_ReadPin(CH394Q_INT_GPIO_Port, CH394Q_INT_Pin) == GPIO_PIN_RESET)
+    {
+      CH394Q_GlobalInterrupt();
+    }
+
+    if (CH394Q_GetSn_INT(0) & Sn_INT_RECV)
+    {
+      uint16_t rxlen = CH394Q_GetSn_RX_RS(0);
+      uint8_t flag = 0U;
+      uint16_t srcport = 0U;
+      uint8_t srcip[16];
+      uint16_t got = CH394Q_Socket_UDP_Recv(0, rxbuf, rxlen, srcip, &srcport, &flag);
+      if (got > 0U)
+      {
+        rxbuf[got] = '\0';
+        SerialApp_Write(rxbuf, got);
+        SerialApp_Write((const uint8_t *)"\r\n", 2U);
+      }
+    }
+
+    osDelay(1);
+  }
+  /* USER CODE END StartUdpTask */
+}
+
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
 /* USER CODE END Application */
-

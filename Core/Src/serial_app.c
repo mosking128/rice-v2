@@ -86,6 +86,9 @@ static uint16_t rx_dma_last_pos = 0U;
 /* 调试输入激活标志：置 1 时 serialTask 停止消费 rx_ring */
 volatile int g_debug_input_active = 0;
 
+/* 调试计数器：UART RX 事件回调触发次数 */
+volatile uint32_t g_rx_event_count = 0;
+
 /* TX 互斥锁：保护 SerialApp_Write 在多任务环境下的并发访问 */
 static osMutexId_t tx_mutex = NULL;
 
@@ -207,6 +210,7 @@ uint32_t SerialApp_GetTxOverflowCount(void)
  */
 void SerialApp_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
 {
+  g_rx_event_count++;
   /* 过滤事件，只处理 USART1 */
   if (huart->Instance == USART1)
   {

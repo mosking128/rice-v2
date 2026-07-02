@@ -65,9 +65,10 @@ typedef struct
 /* 工作模式 */
 typedef enum
 {
-    PICOC_APP_MODE_REPL = 0,  /* REPL 交互模式 */
-    PICOC_APP_MODE_LOAD,      /* 文件加载模式 */
-    PICOC_APP_MODE_DRAIN      /* 排空模式（丢弃数据直到空闲） */
+    PICOC_APP_MODE_BRIDGE = 0, /* UDP 桥接模式（上电默认，串口↔UDP双向转发） */
+    PICOC_APP_MODE_REPL,       /* REPL 交互模式 */
+    PICOC_APP_MODE_LOAD,       /* 文件加载模式 */
+    PICOC_APP_MODE_DRAIN       /* 排空模式（丢弃数据直到空闲） */
 } PicocApp_Mode;
 
 /* 协议命令类型 */
@@ -92,11 +93,10 @@ static uint8_t g_load_buffer[PICOC_APP_LOAD_BUFFER_SIZE];
 static uint32_t g_source_length = 0U;
 static uint32_t g_load_length = 0U;
 static uint8_t g_prompt_pending = 0U;
-static uint8_t g_reset_pending = 0U;
 static uint8_t g_script_running = 0U;
 static uint8_t g_last_char_was_cr = 0U;
 static uint32_t g_drain_idle_count = 0U;
-static PicocApp_Mode g_mode = PICOC_APP_MODE_REPL;
+static PicocApp_Mode g_mode = PICOC_APP_MODE_BRIDGE;
 static const char *g_prompt_text = INTERACTIVE_PROMPT_STATEMENT;
 static Picoc *g_active_picoc = NULL;  /* currently executing PicoC instance, for abort targeting */
 
@@ -105,7 +105,6 @@ static void PicocApp_WriteString(const char *text);
 static void PicocApp_WriteByte(uint8_t ch);
 static void PicocApp_SendResponse(const char *msg);
 static void PicocApp_ShowPrompt(void);
-static void PicocApp_HandleChar(uint8_t ch);
 static void PicocApp_HandleReplChar(uint8_t ch);
 static void PicocApp_HandleLoadChar(uint8_t ch);
 static int PicocApp_AppendByte(uint8_t *buffer, uint32_t *length, uint32_t capacity, uint8_t ch);
@@ -134,9 +133,6 @@ void PicocApp_Init(void)
     PicocInitialise(&g_picoc, PICOC_APP_STACK_SIZE);
     PicocApp_ResetSource();
     PicocApp_ResetLoadBuffer();
-    PicocApp_WriteString(INTERACTIVE_PROMPT_START);
-    g_prompt_text = INTERACTIVE_PROMPT_STATEMENT;
-    PicocApp_ShowPrompt();
 }
 
 /* 请求中断正在执行的 PicoC 脚本（供 serialTask 收到 :abort 时调用） */
@@ -145,6 +141,21 @@ void PicocApp_Abort(void)
     g_picoc.AbortRequested = 1;
     if (g_active_picoc != NULL && g_active_picoc != &g_picoc)
         g_active_picoc->AbortRequested = 1;
+}
+
+/* 从 UDP 桥接模式切换到 RICE REPL 模式 */
+void PicocApp_ActivateRice(void)
+{
+    g_mode = PICOC_APP_MODE_REPL;
+    g_prompt_text = INTERACTIVE_PROMPT_STATEMENT;
+    g_prompt_pending = 0U;
+    g_script_running = 0U;
+    g_last_char_was_cr = 0U;
+    g_drain_idle_count = 0U;
+    PicocApp_ResetSource();
+    PicocApp_ResetLoadBuffer();
+    PicocApp_WriteString(INTERACTIVE_PROMPT_START);
+    PicocApp_ShowPrompt();
 }
 
 /* 执行一行 REPL 源码（供 picocTask 收到 MSG_SOURCE_LINE 时调用） */
@@ -168,6 +179,79 @@ int PicocApp_ProcessChars(const uint8_t *data, uint32_t len, TaskMsg *out_msg)
 {
     uint32_t index;
     int has_msg = 0;
+
+    if (g_mode == PICOC_APP_MODE_BRIDGE)
+    {
+        for (index = 0U; index < len; index++)
+        {
+            uint8_t ch = data[index];
+
+            if (ch == 0U)
+            {
+                continue;
+            }
+
+            if (ch == '\n' && g_last_char_was_cr != 0U)
+            {
+                g_last_char_was_cr = 0U;
+                continue;
+            }
+
+            if (ch == '\r' || ch == '\n')
+            {
+                uint32_t copy_len;
+                g_last_char_was_cr = (ch == '\r') ? 1U : 0U;
+                g_source_buffer[g_source_length] = '\0';
+
+                if (g_source_length == 5U && memcmp(g_source_buffer, ":Rice", 5U) == 0)
+                {
+                    g_mode = PICOC_APP_MODE_REPL;
+                    PicocApp_ResetSource();
+                    out_msg->type = MSG_RICE_ENABLE;
+                    out_msg->len = 0U;
+                    out_msg->data[0] = '\0';
+                    has_msg = 1;
+                    break;
+                }
+
+                if (g_source_length > 0U)
+                {
+                    copy_len = g_source_length;
+                    if (copy_len > sizeof(out_msg->data) - 1U)
+                    {
+                        copy_len = sizeof(out_msg->data) - 1U;
+                    }
+                    memcpy(out_msg->data, g_source_buffer, copy_len);
+                    out_msg->data[copy_len] = '\0';
+                    out_msg->len = (uint16_t)copy_len;
+                    out_msg->type = MSG_UDP_LINE;
+                    has_msg = 1;
+                }
+                PicocApp_ResetSource();
+                break;
+            }
+
+            g_last_char_was_cr = 0U;
+
+            if (ch == '\b' || ch == 0x7fU)
+            {
+                if (g_source_length > 0U)
+                {
+                    g_source_length--;
+                }
+                continue;
+            }
+
+            if (g_source_length >= (sizeof(g_source_buffer) - 1U))
+            {
+                PicocApp_ResetSource();
+                continue;
+            }
+
+            g_source_buffer[g_source_length++] = ch;
+        }
+        return has_msg;
+    }
 
     if (g_mode == PICOC_APP_MODE_DRAIN)
     {
@@ -490,37 +574,6 @@ static void PicocApp_ShowPrompt(void)
     g_prompt_pending = 0U;
 }
 
-/* 字符分发器：根据当前模式将字符路由到对应的处理函数 */
-static void PicocApp_HandleChar(uint8_t ch)
-{
-    if (ch == 0U)
-    {
-        return;
-    }
-
-    /* 合并 \r\n 为单个换行 */
-    if (ch == '\n' && g_last_char_was_cr != 0U)
-    {
-        g_last_char_was_cr = 0U;
-        return;
-    }
-
-    if (g_mode == PICOC_APP_MODE_DRAIN)
-    {
-        g_last_char_was_cr = (ch == '\r') ? 1U : 0U;
-        return;
-    }
-
-    if (g_mode == PICOC_APP_MODE_LOAD)
-    {
-        PicocApp_HandleLoadChar(ch);
-    }
-    else
-    {
-        PicocApp_HandleReplChar(ch);
-    }
-}
-
 /* REPL 模式字符处理
  *
  * 收到换行时：
@@ -573,7 +626,6 @@ static void PicocApp_HandleReplChar(uint8_t ch)
             PicocApp_ResetLoadBuffer();
             g_mode = PICOC_APP_MODE_REPL;
             g_prompt_text = INTERACTIVE_PROMPT_STATEMENT;
-            g_reset_pending = 1U;
             PicocApp_SendResponse(PICOC_APP_RESP_OK);
             g_prompt_pending = 1U;
             return;
@@ -726,7 +778,6 @@ static void PicocApp_HandleLoadChar(uint8_t ch)
             PicocApp_ResetLineBuffer();
             PicocApp_ResetLoadBuffer();
             PicocApp_LeaveLoadMode();
-            g_reset_pending = 1U;
             PicocApp_SendResponse(PICOC_APP_RESP_OK);
             g_prompt_pending = 1U;
             return;

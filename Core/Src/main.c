@@ -21,11 +21,16 @@
 #include "FreeRTOS.h"
 #include "cmsis_os2.h"
 #include "dma.h"
+#include "spi.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "CH394Q_SPI.h"
+#include "CH394Q.h"
+#include "CH394Q_NET.h"
+#include "debug.h"
 #include "picoc_app.h"
 #include "serial_app.h"
 
@@ -62,7 +67,7 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+extern uint16_t CH394Q_Port;
 /* USER CODE END 0 */
 
 /**
@@ -99,9 +104,27 @@ int main(void)
   MX_DMA_Init();
   MX_GPIO_Init();
   MX_USART1_UART_Init();
+  MX_SPI4_Init();
   /* USER CODE BEGIN 2 */
+  Delay_Init();
+  USART_Printf_Init(115200);
+  CH394Q_GPIO_Init();
+  CH394Q_SPIPort_Init();
+  CH394Q_ResetHW();
+  CH394Q_InfParam();
+  CH394Q_SetGINTE(0xFF);
+  CH394Q_SetSINTE(0xFF);
+  {
+    uint8_t tx_sizes[SOCKET_NUM] = {2, 2, 2, 2, 2, 2, 2, 2};
+    uint8_t rx_sizes[SOCKET_NUM] = {2, 2, 2, 2, 2, 2, 2, 2};
+    CH394Q_SocketBuf_Init(tx_sizes, rx_sizes);
+  }
+
+  CH394Q_UDPSocketInit(0, Sn_MODE_UDP, CH394Q_Port);
+
   SerialApp_Init();
   PicocApp_Init();
+  printf("=== UDP Bridge Ready ===\r\n");
 
   /* USER CODE END 2 */
 
@@ -114,11 +137,17 @@ int main(void)
 
   /* We should never get here as control is now taken by the scheduler */
 
-  /* USER CODE BEGIN 3 */
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
 
   /* USER CODE END 3 */
 }
-
+}
 /**
   * @brief System Clock Configuration
   * @retval None
