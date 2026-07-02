@@ -180,6 +180,34 @@ uint32_t SerialApp_Read(uint8_t *data, uint32_t len)
 }
 
 /**
+ * @brief 向 rx_ring 注入外部数据并唤醒 serialTask
+ */
+void SerialApp_InjectData(const uint8_t *data, uint32_t len)
+{
+  /* 写入环形缓冲区 */
+  for (uint32_t i = 0U; i < len; i++)
+  {
+    uint32_t next = (rx_head + 1U) % SERIAL_APP_RX_RING_SIZE;
+    if (next == rx_tail)
+    {
+      rx_overflow++;
+      break;
+    }
+    rx_ring[rx_head] = data[i];
+    rx_head = next;
+  }
+
+  /* 唤醒 serialTask */
+  {
+    extern osThreadId_t serialTaskHandle;
+    if (serialTaskHandle != NULL)
+    {
+      xTaskNotifyGive(serialTaskHandle);
+    }
+  }
+}
+
+/**
  * @brief 获取接收溢出次数
  */
 uint32_t SerialApp_GetRxOverflowCount(void)

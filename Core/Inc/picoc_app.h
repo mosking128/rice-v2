@@ -14,6 +14,7 @@
 #define __PICOC_APP_H__
 
 #include "task_msg.h"
+#include "debug_channel.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,6 +25,9 @@ void PicocApp_Init(void);
 
 /* 从 UDP 桥接模式切换到 RICE REPL 模式，显示启动横幅和提示符 */
 void PicocApp_ActivateRice(void);
+
+/* 设置调试 I/O 通道（串口或 UDP），处理 CStdOut->Putch 交换和 udpTask 挂起/恢复 */
+void PicocApp_SetDebugChannelMode(DebugChannelMode mode);
 
 /* 请求中断正在执行的 PicoC 脚本（供 serialTask 收到 :abort 时调用） */
 void PicocApp_Abort(void);

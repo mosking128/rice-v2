@@ -28,6 +28,7 @@
 /* USER CODE BEGIN Includes */
 #include "CH394Q_NET.h"
 #include "serial_app.h"
+#include <string.h>
 #include "picoc_app.h"
 #include "task_msg.h"
 
@@ -190,8 +191,8 @@ void StartSerialTask(void *argument)
   for(;;)
   {
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
-    /* 调试模式下 picocTask 直接消费 rx_ring，serialTask 让出 */
-    if (g_debug_input_active)
+    /* 串口调试模式下 picocTask 直接消费 rx_ring，serialTask 让出 */
+    if (g_debug_input_active && g_debug_channel == DEBUG_CHANNEL_SERIAL)
       continue;
     /* 排空 rx_ring：一次唤醒尽可能读完所有数据 */
     for (;;)
@@ -296,28 +297,55 @@ void StartUdpTask(void *argument)
 
     if (HAL_GPIO_ReadPin(CH394Q_INT_GPIO_Port, CH394Q_INT_Pin) == GPIO_PIN_RESET)
     {
-      CH394Q_GlobalInterrupt();
-    }
-
-    if (CH394Q_GetSn_INT(0) & Sn_INT_RECV)
-    {
-      uint16_t rxlen = CH394Q_GetSn_RX_RS(0);
-      uint8_t flag = 0U;
-      uint16_t srcport = 0U;
-      uint8_t srcip[16];
-      uint16_t got = CH394Q_Socket_UDP_Recv(0, rxbuf, rxlen, srcip, &srcport, &flag);
-      if (got > 0U)
+      /* 先自行消费 socket 0 数据，再调 GlobalInterrupt 处理其余 */
+      if (CH394Q_GetSn_INT(0) & Sn_INT_RECV)
       {
-        rxbuf[got] = '\0';
-        SerialApp_Write(rxbuf, got);
-        SerialApp_Write((const uint8_t *)"\r\n", 2U);
+        CH394Q_SetSn_INT(0, Sn_INT_RECV);
+        {
+          uint16_t rxlen = CH394Q_GetSn_RX_RS(0);
+          uint8_t flag = 0U;
+          uint16_t srcport = 0U;
+          uint8_t srcip[16];
+          uint16_t got = CH394Q_Socket_UDP_Recv(0, rxbuf, rxlen, srcip, &srcport, &flag);
+          if (got > 0U)
+          {
+            rxbuf[got] = '\0';
+            if (g_debug_channel == DEBUG_CHANNEL_UDP)
+            {
+              DebugChannel_SetSender(srcip, srcport);
+              if (g_debug_input_active)
+              {
+                DebugChannel_UdpInputWrite(rxbuf, got);
+                DebugChannel_UdpInputWrite((const uint8_t *)"\r\n", 2U);
+              }
+              else
+              {
+                /* 注入 rx_ring，让 serialTask 通过 PicocApp_ProcessChars 统一处理 */
+                SerialApp_InjectData(rxbuf, got);
+                SerialApp_InjectData((const uint8_t *)"\r\n", 2U);
+              }
+            }
+            else
+            {
+              SerialApp_Write(rxbuf, got);
+              SerialApp_Write((const uint8_t *)"\r\n", 2U);
+            }
+          }
+        }
       }
+      CH394Q_GlobalInterrupt();
     }
 
     osDelay(1);
   }
   /* USER CODE END StartUdpTask */
 }
+
+/* Private application code --------------------------------------------------*/
+/* USER CODE BEGIN Application */
+
+/* USER CODE END Application */
+
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */

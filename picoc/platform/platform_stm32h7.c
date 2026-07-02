@@ -14,6 +14,7 @@
 #include "../interpreter.h"
 #include "picoc_app.h"
 #include "serial_app.h"
+#include "debug_channel.h"
 
 static void PlatformWriteString(const char *text);
 
@@ -126,6 +127,11 @@ void PlatformPutc(unsigned char OutCh, union OutputStreamInfo *Stream)
 
     while (SerialApp_Write(&ch, 1U) == 0U)
     {
+    }
+
+    if (g_debug_channel == DEBUG_CHANNEL_UDP)
+    {
+        DebugChannel_UdpPutch(OutCh, Stream);
     }
 }
 

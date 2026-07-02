@@ -77,6 +77,18 @@ uint32_t SerialApp_Write(const uint8_t *data, uint32_t len);
 uint32_t SerialApp_Read(uint8_t *data, uint32_t len);
 
 /**
+ * @brief 向接收环形缓冲区注入数据（供外部数据源，如 UDP）
+ *
+ * 将数据写入 rx_ring 并通过任务通知唤醒 serialTask，
+ * serialTask 随后通过 SerialApp_Read 读取并正常处理。
+ * 调用方需传入完整行（含 \r\n 换行符）。
+ *
+ * @param data 数据指针
+ * @param len  数据长度
+ */
+void SerialApp_InjectData(const uint8_t *data, uint32_t len);
+
+/**
  * @brief 获取接收溢出次数
  * 
  * 当接收环形缓冲区已满，无法写入新数据时，会发生溢出。此计数器累计溢出次数。

@@ -23,6 +23,8 @@
 #include "picoc.h"
 #include "interpreter.h"
 #include "cmsis_os2.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include "task_msg.h"
 
 /* PicoC 解释器堆栈大小 */
@@ -82,8 +84,10 @@ typedef enum
     PICOC_APP_COMMAND_RESET,
     PICOC_APP_COMMAND_BKPT,
     PICOC_APP_COMMAND_BKPTCLEAR,
-    PICOC_APP_COMMAND_DEBUG     /* :cont / :step / :eval / :vars / :set
+    PICOC_APP_COMMAND_DEBUG,    /* :cont / :step / :eval / :vars / :set
                                    仅由调试循环处理，REPL/LOAD 模式下静默消耗 */
+    PICOC_APP_COMMAND_DEBUG_UDP,    /* :debug udp   */
+    PICOC_APP_COMMAND_DEBUG_SERIAL  /* :debug serial */
 } PicocApp_Command;
 
 /* 全局状态 */
@@ -133,6 +137,7 @@ void PicocApp_Init(void)
     PicocInitialise(&g_picoc, PICOC_APP_STACK_SIZE);
     PicocApp_ResetSource();
     PicocApp_ResetLoadBuffer();
+    DebugChannel_Init();
 }
 
 /* 请求中断正在执行的 PicoC 脚本（供 serialTask 收到 :abort 时调用） */
@@ -171,6 +176,25 @@ void PicocApp_Reset(void)
     PicocCleanup(&g_picoc);
     PicocInitialise(&g_picoc, PICOC_APP_STACK_SIZE);
     g_debug_input_active = 0;
+}
+
+/* 设置调试 I/O 通道 */
+void PicocApp_SetDebugChannelMode(DebugChannelMode mode)
+{
+    extern osThreadId_t udpTaskHandle;
+
+    if (mode == DEBUG_CHANNEL_UDP)
+    {
+        g_debug_channel = DEBUG_CHANNEL_UDP;
+        if (udpTaskHandle != NULL)
+            vTaskResume(udpTaskHandle);
+    }
+    else
+    {
+        g_debug_channel = DEBUG_CHANNEL_SERIAL;
+        if (udpTaskHandle != NULL)
+            vTaskSuspend(udpTaskHandle);
+    }
 }
 
 /* 处理一批 UART 字符，返回需要入队的消息
@@ -451,6 +475,24 @@ int PicocApp_ProcessChars(const uint8_t *data, uint32_t len, TaskMsg *out_msg)
                     g_prompt_pending = 1U;
                     continue;
                 }
+                if (command == PICOC_APP_COMMAND_DEBUG_UDP)
+                {
+                    PicocApp_WriteString("\r\n");
+                    PicocApp_ResetSource();
+                    PicocApp_SetDebugChannelMode(DEBUG_CHANNEL_UDP);
+                    PicocApp_SendResponse(":ok debug udp\r\n");
+                    g_prompt_pending = 1U;
+                    continue;
+                }
+                if (command == PICOC_APP_COMMAND_DEBUG_SERIAL)
+                {
+                    PicocApp_WriteString("\r\n");
+                    PicocApp_ResetSource();
+                    PicocApp_SetDebugChannelMode(DEBUG_CHANNEL_SERIAL);
+                    PicocApp_SendResponse(":ok debug serial\r\n");
+                    g_prompt_pending = 1U;
+                    continue;
+                }
                 if (command == PICOC_APP_COMMAND_DEBUG)
                 {
                     /* 调试命令 (:cont/:step/:eval/:vars/:set) 在调试模式外收到，
@@ -524,13 +566,30 @@ int PicocApp_ConsoleGetCharBlocking(void)
     uint8_t ch;
     Picoc *active = (g_active_picoc != NULL) ? g_active_picoc : &g_picoc;
 
+    /* UDP 调试模式: 从环形缓冲区读取（由 udpTask 填充） */
+    if (g_debug_channel == DEBUG_CHANNEL_UDP && g_debug_input_active)
+    {
+        for (;;)
+        {
+            int c = DebugChannel_UdpGetChar();
+            if (c >= 0)
+                return c;
+            if (active->AbortRequested)
+            {
+                PlatformExit(active, 1);
+            }
+            osDelay(1);
+        }
+    }
+
+    /* 串口路径（默认） */
     while (SerialApp_Read(&ch, 1U) == 0U)
     {
         if (active->AbortRequested)
         {
-            PlatformExit(active, 1);  /* longjmp back to PicocApp_RunSource, flag cleared there */
+            PlatformExit(active, 1);
         }
-        osDelay(1);  /* yield CPU to serialTask */
+        osDelay(1);
     }
 
     return (int)ch;
@@ -1111,6 +1170,15 @@ static PicocApp_Command PicocApp_ParseCommand(const uint8_t *buffer, uint32_t le
     if (length >= 11U && memcmp(&buffer[start], ":bkptclear", 10U) == 0 && (buffer[start + 10U] == ' ' || buffer[start + 10U] == '\t'))
     {
         return PICOC_APP_COMMAND_BKPTCLEAR;
+    }
+
+    /* :debug udp / :debug serial — 切换调试 I/O 通道 */
+    if (length >= 10U && memcmp(&buffer[start], ":debug ", 7U) == 0)
+    {
+        if ((end - (start + 7U)) == 3U && memcmp(&buffer[start + 7U], "udp", 3U) == 0)
+            return PICOC_APP_COMMAND_DEBUG_UDP;
+        if ((end - (start + 7U)) == 6U && memcmp(&buffer[start + 7U], "serial", 6U) == 0)
+            return PICOC_APP_COMMAND_DEBUG_SERIAL;
     }
 
     /* 调试命令：仅在 DebugCheckStatement() 调试循环内有效。

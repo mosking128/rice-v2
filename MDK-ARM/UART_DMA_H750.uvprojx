@@ -775,6 +775,11 @@
                 </FileArmAds>
               </FileOption>
             </File>
+            <File>
+              <FileName>debug_channel.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\debug_channel.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
