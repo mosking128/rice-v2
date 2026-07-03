@@ -69,5 +69,8 @@ MDK-ARM/**/*.axf
 MDK-ARM/**/*.hex
 MDK-ARM/**/*.bin
 
+# CubeMX
+*.ioc
+
 # Optional local package cache
 tools/picoc_host/wheelhouse/
