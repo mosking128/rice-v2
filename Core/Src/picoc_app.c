@@ -156,6 +156,9 @@ void PicocApp_ActivateRice(void)
     PicocApp_ResetLoadBuffer();
     PicocApp_WriteString(INTERACTIVE_PROMPT_START);
     PicocApp_ShowPrompt();
+    /* UDP 模式激活时强制 flush，确保第一个提示符立即可见 */
+    if (g_active_channel == IO_CHANNEL_UDP)
+        DebugChannel_UdpFlush();
 }
 
 /* 执行一行 REPL 源码（供 picocTask 收到 MSG_SOURCE_LINE 时调用） */
@@ -190,6 +193,9 @@ void PicocApp_SetDebugChannelMode(DebugChannelMode mode)
     /* 立即在新通道显示提示符（切换后旧通道的传输任务不再触发 len=0 延迟提示符） */
     g_prompt_pending = 0U;
     PicocApp_ShowPrompt();
+    /* UDP 模式强制 flush，确保通道切换后提示符立即可见 */
+    if (g_active_channel == IO_CHANNEL_UDP)
+        DebugChannel_UdpFlush();
 }
 
 /* 处理一批 UART 字符，返回需要入队的消息
@@ -475,8 +481,7 @@ int PicocApp_ProcessChars(const uint8_t *data, uint32_t len, TaskMsg *out_msg)
                     PicocApp_WriteString("\r\n");
                     PicocApp_ResetSource();
                     PicocApp_SendResponse(":ok debug udp\r\n");    /* 应答走旧通道 */
-                    PicocApp_SetDebugChannelMode(DEBUG_CHANNEL_UDP); /* 切换 */
-                    g_prompt_pending = 1U;                           /* 提示符走新通道 */
+                    PicocApp_SetDebugChannelMode(DEBUG_CHANNEL_UDP); /* 切换（内含 ShowPrompt） */
                     continue;
                 }
                 if (command == PICOC_APP_COMMAND_DEBUG_SERIAL)
@@ -484,8 +489,7 @@ int PicocApp_ProcessChars(const uint8_t *data, uint32_t len, TaskMsg *out_msg)
                     PicocApp_WriteString("\r\n");
                     PicocApp_ResetSource();
                     PicocApp_SendResponse(":ok debug serial\r\n");    /* 应答走旧通道 */
-                    PicocApp_SetDebugChannelMode(DEBUG_CHANNEL_SERIAL); /* 切换 */
-                    g_prompt_pending = 1U;                              /* 提示符走新通道 */
+                    PicocApp_SetDebugChannelMode(DEBUG_CHANNEL_SERIAL); /* 切换（内含 ShowPrompt） */
                     continue;
                 }
                 if (command == PICOC_APP_COMMAND_DEBUG)
@@ -607,7 +611,7 @@ static void PicocApp_WriteString(const char *text)
             DebugChannel_UdpPutch((unsigned char)*text, NULL);
             text++;
         }
-        DebugChannel_UdpFlush();
+        /* 不强制 flush：让 \n 自然触发发送，合并提示符和输出到同一包 */
     }
     else
     {
