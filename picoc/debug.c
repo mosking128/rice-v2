@@ -607,7 +607,7 @@ void DebugCheckStatement(struct ParseState *Parser)
     char LineBuf[256];
     char *line;
     int len;
-    extern volatile int g_debug_input_active;
+    extern volatile int g_console_input_active;
 
     /* 检查单步标志 */
     if (DebugStepNext)
@@ -639,7 +639,7 @@ void DebugCheckStatement(struct ParseState *Parser)
         WasStep = FALSE;  /* 重置，后续再进循环不会误报为 step */
 
         /* 接管串口输入：serialTask 检测到此标志后停止消费 rx_ring */
-        g_debug_input_active = 1;
+        g_console_input_active = 1;
 
         /* 调试命令循环 */
         for (;;)
@@ -660,7 +660,7 @@ void DebugCheckStatement(struct ParseState *Parser)
             /* :cont — 继续执行 */
             if (len >= 5 && strncmp(line, ":cont", 5) == 0 && (len == 5 || line[5] == ' '))
             {
-                g_debug_input_active = 0;
+                g_console_input_active = 0;
                 return;
             }
 
@@ -675,7 +675,7 @@ void DebugCheckStatement(struct ParseState *Parser)
             if (len == 6 && strncmp(line, ":abort", 6) == 0)
             {
                 PlatformPrintf(pc->CStdOut, ":err load cancelled\r\n");
-                g_debug_input_active = 0;
+                g_console_input_active = 0;
                 longjmp(pc->PicocExitBuf, 1);
             }
 
@@ -719,10 +719,10 @@ void DebugCheckStatement(struct ParseState *Parser)
         }
 
         /* PlatformGetLine 返回 NULL，退出调试循环 */
-        g_debug_input_active = 0;
+        g_console_input_active = 0;
         break;
     }
-    g_debug_input_active = 0;
+    g_console_input_active = 0;
 }
 
 /* 将 src 实例中的所有断点复制到 dest 实例 */
@@ -768,9 +768,9 @@ void DebugStep()
 /* 取消单步标志，释放串口输入给 serialTask */
 void DebugCancelStep(void)
 {
-    extern volatile int g_debug_input_active;
+    extern volatile int g_console_input_active;
     DebugStepNext = FALSE;
-    g_debug_input_active = 0;
+    g_console_input_active = 0;
 }
 
 /* 清除所有断点并重新初始化断点表 */

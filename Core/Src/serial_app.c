@@ -84,7 +84,7 @@ static volatile uint8_t tx_busy = 0U;
 static uint16_t rx_dma_last_pos = 0U;
 
 /* 调试输入激活标志：置 1 时 serialTask 停止消费 rx_ring */
-volatile int g_debug_input_active = 0;
+volatile int g_console_input_active = 0;
 
 /* 调试计数器：UART RX 事件回调触发次数 */
 volatile uint32_t g_rx_event_count = 0;

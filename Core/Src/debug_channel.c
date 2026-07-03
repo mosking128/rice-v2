@@ -26,10 +26,12 @@ static uint8_t  udp_debug_sender_ip[4];
 static uint16_t udp_debug_sender_port = 0U;
 
 volatile DebugChannelMode g_debug_channel = DEBUG_CHANNEL_SERIAL;
+volatile IOChannel g_active_channel = IO_CHANNEL_SERIAL;
 
 void DebugChannel_Init(void)
 {
     g_debug_channel = DEBUG_CHANNEL_SERIAL;
+    g_active_channel = IO_CHANNEL_SERIAL;
     udp_debug_head = 0U;
     udp_debug_tail = 0U;
     udp_debug_out_len = 0U;
@@ -53,6 +55,24 @@ void DebugChannel_UdpPutch(unsigned char OutCh, union OutputStreamInfo *Stream)
     }
 
     if (OutCh == '\n' && udp_debug_out_len > 0U && udpQueneHandle != NULL)
+    {
+        TaskMsg msg;
+        uint32_t copy_len = udp_debug_out_len;
+        if (copy_len > sizeof(msg.data) - 1U)
+            copy_len = sizeof(msg.data) - 1U;
+        (void)memcpy(msg.data, udp_debug_out_buf, copy_len);
+        msg.data[copy_len] = '\0';
+        msg.len = (uint16_t)copy_len;
+        msg.type = MSG_UDP_LINE;
+        (void)osMessageQueuePut(udpQueneHandle, &msg, 0U, 0U);
+        udp_debug_out_len = 0U;
+    }
+}
+
+/* Flush accumulated UDP output without waiting for newline */
+void DebugChannel_UdpFlush(void)
+{
+    if (udp_debug_out_len > 0U && udpQueneHandle != NULL)
     {
         TaskMsg msg;
         uint32_t copy_len = udp_debug_out_len;

@@ -125,13 +125,15 @@ void PlatformPutc(unsigned char OutCh, union OutputStreamInfo *Stream)
 
     (void)Stream;
 
-    while (SerialApp_Write(&ch, 1U) == 0U)
-    {
-    }
-
-    if (g_debug_channel == DEBUG_CHANNEL_UDP)
+    if (g_active_channel == IO_CHANNEL_UDP)
     {
         DebugChannel_UdpPutch(OutCh, Stream);
+    }
+    else
+    {
+        while (SerialApp_Write(&ch, 1U) == 0U)
+        {
+        }
     }
 }
 

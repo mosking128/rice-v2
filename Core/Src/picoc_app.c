@@ -64,15 +64,6 @@ typedef struct
     char last_non_space;    /* 最后一个非空白字符 */
 } PicocApp_SourceState;
 
-/* 工作模式 */
-typedef enum
-{
-    PICOC_APP_MODE_BRIDGE = 0, /* UDP 桥接模式（上电默认，串口↔UDP双向转发） */
-    PICOC_APP_MODE_REPL,       /* REPL 交互模式 */
-    PICOC_APP_MODE_LOAD,       /* 文件加载模式 */
-    PICOC_APP_MODE_DRAIN       /* 排空模式（丢弃数据直到空闲） */
-} PicocApp_Mode;
-
 /* 协议命令类型 */
 typedef enum
 {
@@ -107,10 +98,8 @@ static Picoc *g_active_picoc = NULL;  /* currently executing PicoC instance, for
 /* 前向声明 */
 static void PicocApp_WriteString(const char *text);
 static void PicocApp_WriteByte(uint8_t ch);
-static void PicocApp_SendResponse(const char *msg);
+void PicocApp_SendResponse(const char *msg);
 static void PicocApp_ShowPrompt(void);
-static void PicocApp_HandleReplChar(uint8_t ch);
-static void PicocApp_HandleLoadChar(uint8_t ch);
 static int PicocApp_AppendByte(uint8_t *buffer, uint32_t *length, uint32_t capacity, uint8_t ch);
 static int PicocApp_AppendBlock(uint8_t *buffer, uint32_t *length, uint32_t capacity, const uint8_t *data, uint32_t size);
 static void PicocApp_ResetSource(void);
@@ -138,6 +127,12 @@ void PicocApp_Init(void)
     PicocApp_ResetSource();
     PicocApp_ResetLoadBuffer();
     DebugChannel_Init();
+}
+
+/* 获取当前应用模式（供传输任务判断桥接/REPL 状态） */
+PicocApp_Mode PicocApp_GetMode(void)
+{
+    return g_mode;
 }
 
 /* 请求中断正在执行的 PicoC 脚本（供 serialTask 收到 :abort 时调用） */
@@ -172,29 +167,29 @@ void PicocApp_RunSourceLine(const char *source)
 /* 重置 PicoC 解释器实例（供 picocTask 收到 MSG_RESET 时调用） */
 void PicocApp_Reset(void)
 {
-    extern volatile int g_debug_input_active;
+    extern volatile int g_console_input_active;
     PicocCleanup(&g_picoc);
     PicocInitialise(&g_picoc, PICOC_APP_STACK_SIZE);
-    g_debug_input_active = 0;
+    g_console_input_active = 0;
 }
 
 /* 设置调试 I/O 通道 */
+/* 切换活跃 I/O 通道；任务不再挂起/恢复，各自根据 g_active_channel 自调节 */
 void PicocApp_SetDebugChannelMode(DebugChannelMode mode)
 {
-    extern osThreadId_t udpTaskHandle;
-
     if (mode == DEBUG_CHANNEL_UDP)
     {
+        g_active_channel = IO_CHANNEL_UDP;
         g_debug_channel = DEBUG_CHANNEL_UDP;
-        if (udpTaskHandle != NULL)
-            vTaskResume(udpTaskHandle);
     }
     else
     {
+        g_active_channel = IO_CHANNEL_SERIAL;
         g_debug_channel = DEBUG_CHANNEL_SERIAL;
-        if (udpTaskHandle != NULL)
-            vTaskSuspend(udpTaskHandle);
     }
+    /* 立即在新通道显示提示符（切换后旧通道的传输任务不再触发 len=0 延迟提示符） */
+    g_prompt_pending = 0U;
+    PicocApp_ShowPrompt();
 }
 
 /* 处理一批 UART 字符，返回需要入队的消息
@@ -479,18 +474,18 @@ int PicocApp_ProcessChars(const uint8_t *data, uint32_t len, TaskMsg *out_msg)
                 {
                     PicocApp_WriteString("\r\n");
                     PicocApp_ResetSource();
-                    PicocApp_SetDebugChannelMode(DEBUG_CHANNEL_UDP);
-                    PicocApp_SendResponse(":ok debug udp\r\n");
-                    g_prompt_pending = 1U;
+                    PicocApp_SendResponse(":ok debug udp\r\n");    /* 应答走旧通道 */
+                    PicocApp_SetDebugChannelMode(DEBUG_CHANNEL_UDP); /* 切换 */
+                    g_prompt_pending = 1U;                           /* 提示符走新通道 */
                     continue;
                 }
                 if (command == PICOC_APP_COMMAND_DEBUG_SERIAL)
                 {
                     PicocApp_WriteString("\r\n");
                     PicocApp_ResetSource();
-                    PicocApp_SetDebugChannelMode(DEBUG_CHANNEL_SERIAL);
-                    PicocApp_SendResponse(":ok debug serial\r\n");
-                    g_prompt_pending = 1U;
+                    PicocApp_SendResponse(":ok debug serial\r\n");    /* 应答走旧通道 */
+                    PicocApp_SetDebugChannelMode(DEBUG_CHANNEL_SERIAL); /* 切换 */
+                    g_prompt_pending = 1U;                              /* 提示符走新通道 */
                     continue;
                 }
                 if (command == PICOC_APP_COMMAND_DEBUG)
@@ -547,7 +542,9 @@ int PicocApp_ProcessChars(const uint8_t *data, uint32_t len, TaskMsg *out_msg)
                 g_prompt_pending = 1U;
                 continue;
             }
-            PicocApp_WriteByte(ch);  /* echo */
+            /* echo (serial only — per-char UDP echo is wasteful) */
+            if (g_active_channel != IO_CHANNEL_UDP)
+                PicocApp_WriteByte(ch);
         }
     }
 
@@ -566,8 +563,8 @@ int PicocApp_ConsoleGetCharBlocking(void)
     uint8_t ch;
     Picoc *active = (g_active_picoc != NULL) ? g_active_picoc : &g_picoc;
 
-    /* UDP 调试模式: 从环形缓冲区读取（由 udpTask 填充） */
-    if (g_debug_channel == DEBUG_CHANNEL_UDP && g_debug_input_active)
+    /* UDP active: read from UDP debug ring (filled by udpTask) */
+    if (g_active_channel == IO_CHANNEL_UDP)
     {
         for (;;)
         {
@@ -582,7 +579,7 @@ int PicocApp_ConsoleGetCharBlocking(void)
         }
     }
 
-    /* 串口路径（默认） */
+    /* Serial active: read from rx_ring */
     while (SerialApp_Read(&ch, 1U) == 0U)
     {
         if (active->AbortRequested)
@@ -595,10 +592,24 @@ int PicocApp_ConsoleGetCharBlocking(void)
     return (int)ch;
 }
 
-/* 通过串口发送一个字符串 */
+/* 通过活跃通道发送一个字符串 */
 static void PicocApp_WriteString(const char *text)
 {
-    if (text != NULL)
+    if (text == NULL)
+    {
+        return;
+    }
+
+    if (g_active_channel == IO_CHANNEL_UDP)
+    {
+        while (*text != '\0')
+        {
+            DebugChannel_UdpPutch((unsigned char)*text, NULL);
+            text++;
+        }
+        DebugChannel_UdpFlush();
+    }
+    else
     {
         const uint8_t *buffer = (const uint8_t *)text;
         uint32_t remaining = (uint32_t)strlen(text);
@@ -612,16 +623,24 @@ static void PicocApp_WriteString(const char *text)
     }
 }
 
-/* 通过串口发送单个字节 */
+/* 通过活跃通道发送单个字节 */
 static void PicocApp_WriteByte(uint8_t ch)
 {
-    while (SerialApp_Write(&ch, 1U) == 0U)
+    if (g_active_channel == IO_CHANNEL_UDP)
     {
+        DebugChannel_UdpPutch(ch, NULL);
+        DebugChannel_UdpFlush();
+    }
+    else
+    {
+        while (SerialApp_Write(&ch, 1U) == 0U)
+        {
+        }
     }
 }
 
 /* 发送协议响应消息 */
-static void PicocApp_SendResponse(const char *msg)
+void PicocApp_SendResponse(const char *msg)
 {
     PicocApp_WriteString(msg);
 }
@@ -631,283 +650,6 @@ static void PicocApp_ShowPrompt(void)
 {
     PicocApp_WriteString(g_prompt_text);
     g_prompt_pending = 0U;
-}
-
-/* REPL 模式字符处理
- *
- * 收到换行时：
- *   1. 先检查是否为协议命令（:load / :ping / :reset / :bkpt / :bkptclear）
- *   2. 非命令则进行源码完整性分析
- *   3. 语句完整则立即执行，不完整则切换为续行提示符等待更多输入
- */
-static void PicocApp_HandleReplChar(uint8_t ch)
-{
-    if (ch == '\r' || ch == '\n')
-    {
-        PicocApp_SourceState state;
-        PicocApp_Command command;
-        uint32_t cmd_param = 0U;
-
-        g_last_char_was_cr = (ch == '\r') ? 1U : 0U;
-        g_source_buffer[g_source_length] = '\0';
-        command = PicocApp_ParseCommand(g_source_buffer, g_source_length, &cmd_param);
-
-        if (command == PICOC_APP_COMMAND_LOAD)
-        {
-            PicocApp_WriteString("\r\n");
-            if (cmd_param > 0U && cmd_param > (PICOC_APP_LOAD_BUFFER_SIZE - 1U))
-            {
-                PicocApp_SendResponse(PICOC_APP_RESP_ERR_BUFFER_FULL);
-                PicocApp_ResetSource();
-                g_prompt_pending = 1U;
-                return;
-            }
-            PicocApp_SendResponse(PICOC_APP_RESP_OK);
-            PicocApp_ResetSource();
-            PicocApp_EnterLoadMode();
-            g_prompt_pending = 1U;
-            return;
-        }
-
-        if (command == PICOC_APP_COMMAND_PING)
-        {
-            PicocApp_WriteString("\r\n");
-            PicocApp_SendResponse(PICOC_APP_RESP_PONG);
-            PicocApp_ResetSource();
-            g_prompt_pending = 1U;
-            return;
-        }
-
-        if (command == PICOC_APP_COMMAND_RESET)
-        {
-            PicocApp_WriteString("\r\n");
-            PicocApp_ResetSource();
-            PicocApp_ResetLoadBuffer();
-            g_mode = PICOC_APP_MODE_REPL;
-            g_prompt_text = INTERACTIVE_PROMPT_STATEMENT;
-            PicocApp_SendResponse(PICOC_APP_RESP_OK);
-            g_prompt_pending = 1U;
-            return;
-        }
-
-        if (command == PICOC_APP_COMMAND_BKPT)
-        {
-            PicocApp_WriteString("\r\n");
-            PicocApp_HandleBkptCommand((const char *)g_source_buffer, TRUE);
-            PicocApp_ResetSource();
-            g_prompt_text = INTERACTIVE_PROMPT_STATEMENT;
-            g_prompt_pending = 1U;
-            return;
-        }
-
-        if (command == PICOC_APP_COMMAND_BKPTCLEAR)
-        {
-            PicocApp_WriteString("\r\n");
-            PicocApp_HandleBkptCommand((const char *)g_source_buffer, FALSE);
-            PicocApp_ResetSource();
-            g_prompt_text = INTERACTIVE_PROMPT_STATEMENT;
-            g_prompt_pending = 1U;
-            return;
-        }
-
-        /* 非命令，作为 C 代码处理 */
-        PicocApp_WriteString("\r\n");
-        (void)PicocApp_AppendByte(g_source_buffer, &g_source_length, sizeof(g_source_buffer), '\n');
-        g_source_buffer[g_source_length] = '\0';
-
-        PicocApp_AnalyseSource((const char *)g_source_buffer, &state);
-
-        if (PicocApp_IsSourceComplete((const char *)g_source_buffer, &state) != 0)
-        {
-            /* 语句完整，立即执行 */
-            PicocApp_ExecuteReplSource((const char *)g_source_buffer);
-            PicocApp_ResetSource();
-            g_prompt_text = INTERACTIVE_PROMPT_STATEMENT;
-        }
-        else
-        {
-            /* 语句不完整，等待续行 */
-            g_prompt_text = INTERACTIVE_PROMPT_LINE;
-        }
-
-        g_prompt_pending = 1U;
-        return;
-    }
-
-    g_last_char_was_cr = 0U;
-
-    /* 退格处理 */
-    if (ch == '\b' || ch == 0x7fU)
-    {
-        if (g_source_length > 0U)
-        {
-            g_source_length--;
-            g_source_buffer[g_source_length] = '\0';
-            PicocApp_WriteString("\b \b");
-        }
-        return;
-    }
-
-    /* 追加字符到行缓冲区 */
-    if (PicocApp_AppendByte(g_source_buffer, &g_source_length, sizeof(g_source_buffer), ch) == 0)
-    {
-        PicocApp_SendResponse(PICOC_APP_RESP_ERR_LINE_LONG);
-        PicocApp_ResetSource();
-        g_prompt_text = INTERACTIVE_PROMPT_STATEMENT;
-        g_prompt_pending = 1U;
-        return;
-    }
-
-    /* 回显 */
-    PicocApp_WriteByte(ch);
-}
-
-/* 加载模式字符处理
- *
- * 收到换行时：
- *   1. 检查协议控制命令（:load / :end / :abort / :ping / :reset / :bkpt / :bkptclear）
- *   2. 非命令则作为代码行累积到加载缓冲区
- *   3. 收到 :end 时执行累积的全部代码，收到 :abort 时丢弃并退出加载模式
- */
-static void PicocApp_HandleLoadChar(uint8_t ch)
-{
-    if (ch == '\r' || ch == '\n')
-    {
-        PicocApp_Command command;
-        uint32_t cmd_param = 0U;
-
-        g_last_char_was_cr = (ch == '\r') ? 1U : 0U;
-        g_source_buffer[g_source_length] = '\0';
-        command = PicocApp_ParseCommand(g_source_buffer, g_source_length, &cmd_param);
-
-        if (command == PICOC_APP_COMMAND_LOAD)
-        {
-            PicocApp_WriteString("\r\n");
-            if (cmd_param > 0U && cmd_param > (PICOC_APP_LOAD_BUFFER_SIZE - 1U))
-            {
-                PicocApp_SendResponse(PICOC_APP_RESP_ERR_BUFFER_FULL);
-                PicocApp_ResetLineBuffer();
-                PicocApp_ResetLoadBuffer();
-                PicocApp_LeaveLoadMode();
-                g_prompt_pending = 1U;
-                return;
-            }
-            PicocApp_SendResponse(PICOC_APP_RESP_OK);
-            PicocApp_ResetLineBuffer();
-            PicocApp_ResetLoadBuffer();
-            g_prompt_pending = 1U;
-            return;
-        }
-
-        if (command == PICOC_APP_COMMAND_END)
-        {
-            PicocApp_WriteString("\r\n");
-            PicocApp_ResetLineBuffer();
-            PicocApp_ExecuteLoadSource();
-            PicocApp_ResetLoadBuffer();
-            PicocApp_SendResponse(PICOC_APP_RESP_OK_READY);
-            g_prompt_text = PICOC_APP_LOAD_PROMPT;
-            g_prompt_pending = 1U;
-            return;
-        }
-
-        if (command == PICOC_APP_COMMAND_ABORT)
-        {
-            PicocApp_WriteString("\r\n");
-            PicocApp_ResetLineBuffer();
-            PicocApp_ResetLoadBuffer();
-            PicocApp_SendResponse(PICOC_APP_RESP_ERR_LOAD_CANCELLED);
-            PicocApp_LeaveLoadMode();
-            g_prompt_pending = 1U;
-            return;
-        }
-
-        if (command == PICOC_APP_COMMAND_PING)
-        {
-            PicocApp_WriteString("\r\n");
-            PicocApp_SendResponse(PICOC_APP_RESP_PONG);
-            PicocApp_ResetLineBuffer();
-            g_prompt_pending = 1U;
-            return;
-        }
-
-        if (command == PICOC_APP_COMMAND_RESET)
-        {
-            PicocApp_WriteString("\r\n");
-            PicocApp_ResetLineBuffer();
-            PicocApp_ResetLoadBuffer();
-            PicocApp_LeaveLoadMode();
-            PicocApp_SendResponse(PICOC_APP_RESP_OK);
-            g_prompt_pending = 1U;
-            return;
-        }
-
-        if (command == PICOC_APP_COMMAND_BKPT)
-        {
-            PicocApp_WriteString("\r\n");
-            PicocApp_HandleBkptCommand((const char *)g_source_buffer, TRUE);
-            PicocApp_ResetLineBuffer();
-            g_prompt_pending = 1U;
-            return;
-        }
-
-        if (command == PICOC_APP_COMMAND_BKPTCLEAR)
-        {
-            PicocApp_WriteString("\r\n");
-            PicocApp_HandleBkptCommand((const char *)g_source_buffer, FALSE);
-            PicocApp_ResetLineBuffer();
-            g_prompt_pending = 1U;
-            return;
-        }
-
-        /* 非命令，作为代码行累积到加载缓冲区 */
-        if (PicocApp_AppendBlock(g_load_buffer,
-                                 &g_load_length,
-                                 sizeof(g_load_buffer),
-                                 g_source_buffer,
-                                 g_source_length) == 0 ||
-            PicocApp_AppendByte(g_load_buffer, &g_load_length, sizeof(g_load_buffer), '\n') == 0)
-        {
-            PicocApp_SendResponse(PICOC_APP_RESP_ERR_BUFFER_FULL);
-            PicocApp_ResetLineBuffer();
-            PicocApp_ResetLoadBuffer();
-            PicocApp_LeaveLoadMode();
-            g_mode = PICOC_APP_MODE_DRAIN;
-            g_drain_idle_count = 0U;
-            g_last_char_was_cr = 0U;
-            g_prompt_pending = 1U;
-            return;
-        }
-
-        PicocApp_ResetLineBuffer();
-        g_prompt_pending = 1U;
-        return;
-    }
-
-    g_last_char_was_cr = 0U;
-
-    if (ch == '\b' || ch == 0x7fU)
-    {
-        if (g_source_length > 0U)
-        {
-            g_source_length--;
-            g_source_buffer[g_source_length] = '\0';
-        }
-        return;
-    }
-
-    if (PicocApp_AppendByte(g_source_buffer, &g_source_length, sizeof(g_source_buffer), ch) == 0)
-    {
-        PicocApp_SendResponse(PICOC_APP_RESP_ERR_LINE_LONG);
-        PicocApp_ResetLineBuffer();
-        PicocApp_ResetLoadBuffer();
-        PicocApp_LeaveLoadMode();
-        g_mode = PICOC_APP_MODE_DRAIN;
-        g_drain_idle_count = 0U;
-        g_last_char_was_cr = 0U;
-        g_prompt_pending = 1U;
-        return;
-    }
 }
 
 /* 向缓冲区追加一个字节，尾部保持空终止。

@@ -26,7 +26,22 @@ void PicocApp_Init(void);
 /* 从 UDP 桥接模式切换到 RICE REPL 模式，显示启动横幅和提示符 */
 void PicocApp_ActivateRice(void);
 
-/* 设置调试 I/O 通道（串口或 UDP），处理 CStdOut->Putch 交换和 udpTask 挂起/恢复 */
+/* 应用工作模式 */
+typedef enum
+{
+    PICOC_APP_MODE_BRIDGE = 0, /* UDP 桥接模式（上电默认，串口↔UDP双向转发） */
+    PICOC_APP_MODE_REPL,       /* REPL 交互模式 */
+    PICOC_APP_MODE_LOAD,       /* 文件加载模式 */
+    PICOC_APP_MODE_DRAIN       /* 排空模式（丢弃数据直到空闲） */
+} PicocApp_Mode;
+
+/* 获取当前应用模式（供传输任务判断桥接/REPL 状态） */
+PicocApp_Mode PicocApp_GetMode(void);
+
+/* 发送协议响应消息（通道感知，自动选择串口或UDP） */
+void PicocApp_SendResponse(const char *msg);
+
+/* 设置调试 I/O 通道（串口或 UDP） */
 void PicocApp_SetDebugChannelMode(DebugChannelMode mode);
 
 /* 请求中断正在执行的 PicoC 脚本（供 serialTask 收到 :abort 时调用） */

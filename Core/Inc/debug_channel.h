@@ -19,10 +19,20 @@ typedef enum {
     DEBUG_CHANNEL_UDP    = 1
 } DebugChannelMode;
 
+/* Unified I/O channel selector — the single source of truth for all I/O routing */
+typedef enum {
+    IO_CHANNEL_SERIAL = 0,
+    IO_CHANNEL_UDP    = 1
+} IOChannel;
+
 extern volatile DebugChannelMode g_debug_channel;
+extern volatile IOChannel g_active_channel;
 
 void DebugChannel_Init(void);
 DebugChannelMode DebugChannel_GetMode(void);
+
+/* Flush accumulated UDP output immediately (for prompts with no trailing \n) */
+void DebugChannel_UdpFlush(void);
 
 /* PicoC 输出字符，在 UDP 调试模式下累积到缓冲区，
  * 遇 '\n' 通过 udpQuene → udpTask → CH394Q 发出 */

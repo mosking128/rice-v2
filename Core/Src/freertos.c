@@ -191,10 +191,10 @@ void StartSerialTask(void *argument)
   for(;;)
   {
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
-    /* 串口调试模式下 picocTask 直接消费 rx_ring，serialTask 让出 */
-    if (g_debug_input_active && g_debug_channel == DEBUG_CHANNEL_SERIAL)
+    /* picocTask 在调试循环中直接消费输入，serialTask 让出 */
+    if (g_console_input_active)
       continue;
-    /* 排空 rx_ring：一次唤醒尽可能读完所有数据 */
+    /* 排空 rx_ring：一次性读完所有数据 */
     for (;;)
     {
       uint32_t len = SerialApp_Read(buf, sizeof(buf));
@@ -213,9 +213,8 @@ void StartSerialTask(void *argument)
               (void)osMessageQueuePut(udpQueneHandle, &msg, 0U, 0U);
             break;
           case MSG_RICE_ENABLE:
+            g_active_channel = IO_CHANNEL_SERIAL;
             PicocApp_ActivateRice();
-            if (udpTaskHandle != NULL)
-              vTaskSuspend(udpTaskHandle);
             if (picocTaskHandle != NULL)
               vTaskResume(picocTaskHandle);
             break;
@@ -282,10 +281,15 @@ void StartUdpTask(void *argument)
   /* USER CODE BEGIN StartUdpTask */
   TaskMsg msg;
   uint8_t rxbuf[256];
+  /* 本地行缓冲：桥接模式转发 + 非活跃模式扫描切换命令 + :Rice 检测 */
+  uint8_t scan_buf[64];
+  uint32_t scan_len = 0U;
+  uint8_t scan_last_cr = 0U;
   (void)argument;
 
   for(;;)
   {
+    /* 1. 发送待发的 UDP 输出行 */
     while (udpQueneHandle != NULL && osMessageQueueGet(udpQueneHandle, &msg, NULL, 0U) == osOK)
     {
       if (msg.type == MSG_UDP_LINE && msg.len > 0U)
@@ -295,9 +299,9 @@ void StartUdpTask(void *argument)
       }
     }
 
+    /* 2. 轮询 CH394Q 接收 UDP 数据 */
     if (HAL_GPIO_ReadPin(CH394Q_INT_GPIO_Port, CH394Q_INT_Pin) == GPIO_PIN_RESET)
     {
-      /* 先自行消费 socket 0 数据，再调 GlobalInterrupt 处理其余 */
       if (CH394Q_GetSn_INT(0) & Sn_INT_RECV)
       {
         CH394Q_SetSn_INT(0, Sn_INT_RECV);
@@ -310,30 +314,101 @@ void StartUdpTask(void *argument)
           if (got > 0U)
           {
             rxbuf[got] = '\0';
-            if (g_debug_channel == DEBUG_CHANNEL_UDP)
+            DebugChannel_SetSender(srcip, srcport);
+
+            /* === State A: UDP 活跃 + 调试模式 — 喂入调试环形缓冲区 === */
+            if (g_active_channel == IO_CHANNEL_UDP && g_console_input_active)
             {
-              DebugChannel_SetSender(srcip, srcport);
-              if (g_debug_input_active)
-              {
-                DebugChannel_UdpInputWrite(rxbuf, got);
-                DebugChannel_UdpInputWrite((const uint8_t *)"\r\n", 2U);
-              }
-              else
-              {
-                /* 注入 rx_ring，让 serialTask 通过 PicocApp_ProcessChars 统一处理 */
-                SerialApp_InjectData(rxbuf, got);
-                SerialApp_InjectData((const uint8_t *)"\r\n", 2U);
-              }
+              DebugChannel_UdpInputWrite(rxbuf, got);
+              DebugChannel_UdpInputWrite((const uint8_t *)"\r\n", 2U);
             }
+            /* === State B: UDP 活跃 + 正常 REPL/LOAD — 注入 rx_ring 由 serialTask 统一解析 === */
+            else if (g_active_channel == IO_CHANNEL_UDP)
+            {
+              SerialApp_InjectData(rxbuf, got);
+              SerialApp_InjectData((const uint8_t *)"\r\n", 2U);
+            }
+            /* === State C: 桥接模式 — 转发UDP→串口，扫描 :Rice（无需换行符） === */
+            else if (PicocApp_GetMode() == PICOC_APP_MODE_BRIDGE)
+            {
+              uint8_t rice_found = 0U;
+              /* 扫描 :Rice（可能在数据任意位置，无需等待换行） */
+              for (uint16_t i = 0U; i + 5U <= got; i++)
+              {
+                if (rxbuf[i] == ':' && memcmp(&rxbuf[i], ":Rice", 5U) == 0)
+                {
+                  rice_found = 1U;
+                  g_active_channel = IO_CHANNEL_UDP;
+                  g_debug_channel = DEBUG_CHANNEL_UDP;
+                  PicocApp_ActivateRice();
+                  if (picocTaskHandle != NULL)
+                    vTaskResume(picocTaskHandle);
+                  /* 回应 :Rice 发送方（走 UDP） */
+                  {
+                    const char *resp = ":ok rice\r\n";
+                    TaskMsg rmsg;
+                    rmsg.type = MSG_UDP_LINE;
+                    rmsg.len = (uint16_t)strlen(resp);
+                    memcpy(rmsg.data, resp, rmsg.len + 1U);
+                    if (udpQueneHandle != NULL)
+                      (void)osMessageQueuePut(udpQueneHandle, &rmsg, 0U, 0U);
+                  }
+                  break;
+                }
+              }
+              /* 未命中 :Rice 才转发到串口（命中后通道已切换为UDP，不应再写串口） */
+              if (rice_found == 0U)
+              {
+                SerialApp_Write(rxbuf, got);
+                SerialApp_Write((const uint8_t *)"\r\n", 2U);
+              }
+              /* 清空行缓冲 */
+              scan_len = 0U;
+              scan_last_cr = 0U;
+            }
+            /* === State D: 串口活跃（UDP非活跃）— 行扫描 :debug udp === */
             else
             {
-              SerialApp_Write(rxbuf, got);
-              SerialApp_Write((const uint8_t *)"\r\n", 2U);
+              for (uint16_t i = 0U; i < got; i++)
+              {
+                uint8_t ch = rxbuf[i];
+                if (ch == '\r' || ch == '\n')
+                {
+                  if (ch == '\n' && scan_last_cr) { scan_last_cr = 0U; continue; }
+                  scan_last_cr = (ch == '\r') ? 1U : 0U;
+
+                  if (scan_len > 0U)
+                  {
+                    scan_buf[scan_len] = '\0';
+                    uint32_t start = 0U;
+                    while (start < scan_len && (scan_buf[start] == ' ' || scan_buf[start] == '\t'))
+                      start++;
+                    if (scan_len - start >= 10U &&
+                        memcmp(&scan_buf[start], ":debug udp", 10U) == 0)
+                    {
+                      PicocApp_SetDebugChannelMode(DEBUG_CHANNEL_UDP);
+                      PicocApp_SendResponse(":ok debug udp\r\n");
+                    }
+                  }
+                  scan_len = 0U;
+                  continue;
+                }
+                scan_last_cr = 0U;
+                if (scan_len < sizeof(scan_buf) - 1U)
+                  scan_buf[scan_len++] = ch;
+              }
             }
           }
         }
       }
       CH394Q_GlobalInterrupt();
+    }
+
+    /* 3. UDP 活跃时周期性触发延迟提示符（每次循环安全，ShowPrompt 会清 g_prompt_pending） */
+    if (g_active_channel == IO_CHANNEL_UDP && !g_console_input_active)
+    {
+      TaskMsg dummy;
+      (void)PicocApp_ProcessChars(rxbuf, 0U, &dummy);
     }
 
     osDelay(1);

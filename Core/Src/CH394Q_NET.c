@@ -456,5 +456,4 @@ void CH394Q_UDPSendData(uint8_t sockindex, const uint8_t *data, uint16_t len)
 {
     CH394Q_SetSn_INT(sockindex, 0xFF);
     CH394Q_SocketSendTo(sockindex, data, len, DesIP, DesPort);
-    printf("-> PC: %s\r\n", data);
 }
