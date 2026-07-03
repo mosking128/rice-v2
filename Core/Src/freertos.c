@@ -187,40 +187,81 @@ void StartSerialTask(void *argument)
   /* USER CODE BEGIN StartSerialTask */
   uint8_t buf[256];
   TaskMsg msg;
+  /* 本地行缓冲：UDP 非活跃模式下扫描 ":debug serial" */
+  uint8_t scan_buf[64];
+  uint32_t scan_len = 0U;
+  uint8_t scan_last_cr = 0U;
   (void)argument;
   for(;;)
   {
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
     /* picocTask 在调试循环中直接消费输入，serialTask 让出 */
-    if (g_console_input_active)
+    if (g_console_input_active && g_active_channel == IO_CHANNEL_SERIAL)
       continue;
-    /* 排空 rx_ring：一次性读完所有数据 */
+    /* 排空 rx_ring */
     for (;;)
     {
       uint32_t len = SerialApp_Read(buf, sizeof(buf));
       if (len == 0U)
       {
-        /* 无数据时触发延迟提示符检查 */
-        (void)PicocApp_ProcessChars(buf, 0U, &msg);
+        if (g_active_channel == IO_CHANNEL_SERIAL)
+          (void)PicocApp_ProcessChars(buf, 0U, &msg);
         break;
       }
-      if (PicocApp_ProcessChars(buf, len, &msg) != 0)
+
+      if (g_active_channel == IO_CHANNEL_SERIAL)
       {
-        switch (msg.type)
+        /* === 串口活跃：正常解析 === */
+        if (PicocApp_ProcessChars(buf, len, &msg) != 0)
         {
-          case MSG_UDP_LINE:
-            if (udpQueneHandle != NULL)
-              (void)osMessageQueuePut(udpQueneHandle, &msg, 0U, 0U);
-            break;
-          case MSG_RICE_ENABLE:
-            g_active_channel = IO_CHANNEL_SERIAL;
-            PicocApp_ActivateRice();
-            if (picocTaskHandle != NULL)
-              vTaskResume(picocTaskHandle);
-            break;
-          default:
-            (void)osMessageQueuePut(uartQueneHandle, &msg, 0U, 0U);
-            break;
+          switch (msg.type)
+          {
+            case MSG_UDP_LINE:
+              if (udpQueneHandle != NULL)
+                (void)osMessageQueuePut(udpQueneHandle, &msg, 0U, 0U);
+              break;
+            case MSG_RICE_ENABLE:
+              g_active_channel = IO_CHANNEL_SERIAL;
+              PicocApp_ActivateRice();
+              if (picocTaskHandle != NULL)
+                vTaskResume(picocTaskHandle);
+              break;
+            default:
+              (void)osMessageQueuePut(uartQueneHandle, &msg, 0U, 0U);
+              break;
+          }
+        }
+      }
+      else
+      {
+        /* === 串口非活跃（UDP 模式）：仅扫描 ":debug serial" === */
+        for (uint32_t i = 0U; i < len; i++)
+        {
+          uint8_t ch = buf[i];
+          if (ch == '\r' || ch == '\n')
+          {
+            if (ch == '\n' && scan_last_cr) { scan_last_cr = 0U; continue; }
+            scan_last_cr = (ch == '\r') ? 1U : 0U;
+
+            if (scan_len > 0U)
+            {
+              scan_buf[scan_len] = '\0';
+              uint32_t start = 0U;
+              while (start < scan_len && (scan_buf[start] == ' ' || scan_buf[start] == '\t'))
+                start++;
+              if (scan_len - start == 13U &&
+                  memcmp(&scan_buf[start], ":debug serial", 13U) == 0)
+              {
+                PicocApp_SetDebugChannelMode(DEBUG_CHANNEL_SERIAL);
+                PicocApp_SendResponse(":ok debug serial\r\n");
+              }
+            }
+            scan_len = 0U;
+            continue;
+          }
+          scan_last_cr = 0U;
+          if (scan_len < sizeof(scan_buf) - 1U)
+            scan_buf[scan_len++] = ch;
         }
       }
     }
@@ -322,11 +363,49 @@ void StartUdpTask(void *argument)
               DebugChannel_UdpInputWrite(rxbuf, got);
               DebugChannel_UdpInputWrite((const uint8_t *)"\r\n", 2U);
             }
-            /* === State B: UDP 活跃 + 正常 REPL/LOAD — 注入 rx_ring 由 serialTask 统一解析 === */
+            /* === State B: UDP 活跃 + 正常 REPL/LOAD — 逐行调用解析器 === */
             else if (g_active_channel == IO_CHANNEL_UDP)
             {
-              SerialApp_InjectData(rxbuf, got);
-              SerialApp_InjectData((const uint8_t *)"\r\n", 2U);
+              /* 确保数据以 \r\n 结尾（旧代码通过 InjectData 追加 \r\n 保证了这一点） */
+              if (got + 2U <= sizeof(rxbuf) &&
+                  !(got >= 2U && rxbuf[got - 2U] == '\r' && rxbuf[got - 1U] == '\n'))
+              {
+                rxbuf[got++] = '\r';
+                rxbuf[got++] = '\n';
+              }
+              uint16_t pos = 0U;
+              while (pos < got)
+              {
+                uint16_t seg_end = pos;
+                while (seg_end < got && rxbuf[seg_end] != '\r' && rxbuf[seg_end] != '\n')
+                  seg_end++;
+                if (seg_end < got)
+                  seg_end++;  /* 包含分隔符 */
+                else if (seg_end == pos)
+                  break;
+
+                {
+                  TaskMsg out_msg;
+                  if (PicocApp_ProcessChars(&rxbuf[pos], seg_end - pos, &out_msg) != 0)
+                  {
+                    switch (out_msg.type)
+                    {
+                      case MSG_SOURCE_LINE:
+                      case MSG_LOAD_BEGIN:
+                      case MSG_LOAD_END:
+                      case MSG_LOAD_ABORT:
+                      case MSG_RESET:
+                        (void)osMessageQueuePut(uartQueneHandle, &out_msg, 0U, 0U);
+                        break;
+                      default:
+                        break;
+                    }
+                  }
+                }
+                pos = seg_end;
+                if (pos < got && rxbuf[pos] == '\n' && pos > 0U && rxbuf[pos - 1U] == '\r')
+                  pos++;
+              }
             }
             /* === State C: 桥接模式 — 转发UDP→串口，扫描 :Rice（无需换行符） === */
             else if (PicocApp_GetMode() == PICOC_APP_MODE_BRIDGE)
