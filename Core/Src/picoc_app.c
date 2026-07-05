@@ -379,9 +379,10 @@ int PicocApp_ProcessChars(const uint8_t *data, uint32_t len, TaskMsg *out_msg)
                     continue;
                 }
 
-                /* non-command: accumulate into load_buffer (skip empty lines)
+                /* non-command: accumulate into load_buffer (include empty lines
+                 * to preserve original file line numbers for breakpoints).
                  * 脚本执行期间跳过，防止写坏 g_load_buffer，但命令仍可处理 */
-                if (g_script_running == 0U && g_source_length > 0U)
+                if (g_script_running == 0U)
                 {
                     (void)PicocApp_AppendBlock(g_load_buffer, &g_load_length,
                                                PICOC_APP_LOAD_BUFFER_SIZE,
