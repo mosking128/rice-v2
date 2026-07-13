@@ -287,7 +287,7 @@ void CH394Q_SocketInterrupt(uint8_t sockindex)
     uint16_t macraw_real_len = 0;
     uint8_t Sn_STA_state = CH394Q_GetSn_STA(sockindex);
     uint8_t Sn_INT_state = CH394Q_GetSn_INT(sockindex);
-    if (Sn_INT_state & Sn_INT_RECV)
+    if ((Sn_INT_state & Sn_INT_RECV) && Sn_STA_state != SOCK_UDP)
     {
         len = CH394Q_GetSn_RX_RS(sockindex);
         CH394Q_SetSn_INT(sockindex, Sn_INT_RECV);

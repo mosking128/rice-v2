@@ -780,6 +780,7 @@ void PicocApp_ExecuteLoadSource(void)
     PicocCleanup(&isolated_picoc);
     DebugClearAllBreakpoints(&g_picoc);
     PicocApp_ResetLoadBuffer();
+    g_prompt_pending = 0U;  /* clear stale pending flag to prevent race */
     g_mode = PICOC_APP_MODE_REPL;
     g_prompt_text = INTERACTIVE_PROMPT_STATEMENT;
     g_script_running = 0U;
