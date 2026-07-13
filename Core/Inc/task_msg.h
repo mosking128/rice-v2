@@ -16,6 +16,7 @@ typedef enum {
     MSG_LOAD_END,       /* :end command, execute loaded script */
     MSG_LOAD_ABORT,     /* :abort command in load mode, cancel load */
     MSG_RESET,          /* :reset command, reinitialize PicoC */
+    MSG_SYS_RESET,      /* :RST command, NVIC system reset */
 } TaskMsgType;
 
 typedef struct {

@@ -226,6 +226,9 @@ void StartSerialTask(void *argument)
               if (picocTaskHandle != NULL)
                 vTaskResume(picocTaskHandle);
               break;
+            case MSG_SYS_RESET:
+              HAL_NVIC_SystemReset();
+              break;
             default:
               (void)osMessageQueuePut(uartQueneHandle, &msg, 0U, 0U);
               break;
@@ -396,6 +399,9 @@ void StartUdpTask(void *argument)
                       case MSG_LOAD_ABORT:
                       case MSG_RESET:
                         (void)osMessageQueuePut(uartQueneHandle, &out_msg, 0U, 0U);
+                        break;
+                      case MSG_SYS_RESET:
+                        HAL_NVIC_SystemReset();
                         break;
                       default:
                         break;

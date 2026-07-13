@@ -73,6 +73,7 @@ typedef enum
     PICOC_APP_COMMAND_ABORT,
     PICOC_APP_COMMAND_PING,
     PICOC_APP_COMMAND_RESET,
+    PICOC_APP_COMMAND_RST,       /* :RST - NVIC system reset */
     PICOC_APP_COMMAND_BKPT,
     PICOC_APP_COMMAND_BKPTCLEAR,
     PICOC_APP_COMMAND_DEBUG,    /* :cont / :step / :eval / :vars / :set
@@ -371,6 +372,17 @@ int PicocApp_ProcessChars(const uint8_t *data, uint32_t len, TaskMsg *out_msg)
                     continue;
                 }
 
+                if (command == PICOC_APP_COMMAND_RST)
+                {
+                    PicocApp_WriteString("\r\n");
+                    PicocApp_SendResponse(PICOC_APP_RESP_OK);
+                    out_msg->type = MSG_SYS_RESET;
+                    out_msg->len = 0;
+                    out_msg->data[0] = '\0';
+                    has_msg = 1;
+                    continue;
+                }
+
                 if (command == PICOC_APP_COMMAND_DEBUG)
                 {
                     PicocApp_WriteString("\r\n");
@@ -454,6 +466,16 @@ int PicocApp_ProcessChars(const uint8_t *data, uint32_t len, TaskMsg *out_msg)
                     g_prompt_pending = 1U;
                     PicocApp_SendResponse(PICOC_APP_RESP_OK);
                     out_msg->type = MSG_RESET;
+                    out_msg->len = 0;
+                    out_msg->data[0] = '\0';
+                    has_msg = 1;
+                    continue;
+                }
+                if (command == PICOC_APP_COMMAND_RST)
+                {
+                    PicocApp_WriteString("\r\n");
+                    PicocApp_SendResponse(PICOC_APP_RESP_OK);
+                    out_msg->type = MSG_SYS_RESET;
                     out_msg->len = 0;
                     out_msg->data[0] = '\0';
                     has_msg = 1;
@@ -897,6 +919,11 @@ static PicocApp_Command PicocApp_ParseCommand(const uint8_t *buffer, uint32_t le
     if (length == 6U && memcmp(&buffer[start], ":reset", 6U) == 0)
     {
         return PICOC_APP_COMMAND_RESET;
+    }
+
+    if (length == 4U && memcmp(&buffer[start], ":RST", 4U) == 0)
+    {
+        return PICOC_APP_COMMAND_RST;
     }
 
     if (length == 4U && memcmp(&buffer[start], ":end", 4U) == 0)
