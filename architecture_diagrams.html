@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RICE v2 架构图</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --ink: #182230;
+      --muted: #5b6677;
+      --line: #39485d;
+      --accent: #2563eb;
+      --accent2: #0f766e;
+      --warn: #b45309;
+      --soft: #dbe5f2;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    .page {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    h1 {
+      font-size: 28px;
+      margin: 0 0 8px;
+      letter-spacing: 0;
+    }
+    .intro {
+      margin: 0 0 20px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid #d8e0eb;
+      border-radius: 12px;
+      padding: 18px;
+      margin: 18px 0;
+      box-shadow: 0 8px 24px rgba(17, 24, 39, 0.04);
+    }
+    h2 {
+      font-size: 20px;
+      margin: 0 0 10px;
+    }
+    .desc {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      background: linear-gradient(180deg, #ffffff, #fbfdff);
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+    }
+    .box {
+      fill: #ffffff;
+      stroke: #334155;
+      stroke-width: 1.6;
+      rx: 12;
+      ry: 12;
+    }
+    .box.accent { stroke: var(--accent); fill: #eff6ff; }
+    .box.teal { stroke: var(--accent2); fill: #ecfdf5; }
+    .box.warn { stroke: var(--warn); fill: #fff7ed; }
+    .label {
+      font-size: 16px;
+      fill: var(--ink);
+      font-weight: 600;
+      text-anchor: middle;
+    }
+    .sub {
+      font-size: 12px;
+      fill: var(--muted);
+      text-anchor: middle;
+    }
+    .small {
+      font-size: 11px;
+      fill: var(--muted);
+      text-anchor: middle;
+    }
+    .line {
+      stroke: var(--line);
+      stroke-width: 2.2;
+      fill: none;
+      marker-end: url(#arrow);
+    }
+    .thin {
+      stroke: #718096;
+      stroke-width: 1.8;
+      fill: none;
+      marker-end: url(#arrow);
+    }
+    .dashed {
+      stroke-dasharray: 7 6;
+    }
+    .flowtag {
+      font-size: 12px;
+      fill: #334155;
+      font-weight: 600;
+      paint-order: stroke;
+      stroke: white;
+      stroke-width: 4px;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .legend text { font-size: 12px; fill: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>RICE v2 固件结构图</h1>
+    <p class="intro">这份 HTML 把之前两张图收进一个可直接打开的页面里，分为状态切换图和数据流动图。图中内容按当前代码实现整理，而不是只按 README 的概念描述。</p>
+
+    <section>
+      <h2>1. 模式 / 状态切换图</h2>
+      <p class="desc">展示 BRIDGE、REPL、LOAD、调试停住、重置等状态之间的实际切换关系。</p>
+      <svg viewBox="0 0 1500 980" role="img" aria-label="模式切换图">
+        <defs>
+          <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#39485d"></path>
+          </marker>
+        </defs>
+
+        <text x="750" y="44" class="label" style="font-size:22px;">RICE v2 模式 / 状态切换</text>
+        <text x="750" y="68" class="sub">从上电桥接，到激活 REPL，再到 LOAD 和调试停住后的命令循环</text>
+
+        <!-- Bridge -->
+        <rect x="70" y="170" width="250" height="92" class="box accent" />
+        <text x="195" y="205" class="label">BRIDGE</text>
+        <text x="195" y="228" class="sub">默认桥接模式</text>
+        <text x="195" y="248" class="small">串口 / UDP 转发</text>
+
+        <!-- Repl -->
+        <rect x="380" y="90" width="250" height="92" class="box" />
+        <text x="505" y="124" class="label">REPL</text>
+        <text x="505" y="147" class="sub">交互解释模式</text>
+        <text x="505" y="167" class="small">`:Rice` 激活后进入</text>
+
+        <!-- Load -->
+        <rect x="380" y="250" width="250" height="92" class="box teal" />
+        <text x="505" y="284" class="label">LOAD</text>
+        <text x="505" y="307" class="sub">脚本上传模式</text>
+        <text x="505" y="327" class="small">`:load` / `:end` / `:abort`</text>
+
+        <!-- Debug halt -->
+        <rect x="700" y="110" width="320" height="110" class="box warn" />
+        <text x="860" y="146" class="label">DEBUG_HALT</text>
+        <text x="860" y="170" class="sub">断点 / 单步停住后的调试循环</text>
+        <text x="860" y="192" class="small">`:cont` `:step` `:eval` `:vars` `:set`</text>
+
+        <!-- Exec load -->
+        <rect x="700" y="290" width="320" height="110" class="box accent" />
+        <text x="860" y="326" class="label">EXEC_LOAD</text>
+        <text x="860" y="350" class="sub">隔离 PicoC 实例执行上传脚本</text>
+        <text x="860" y="372" class="small">执行完后回到 REPL</text>
+
+        <!-- Reset / sys reset -->
+        <rect x="1110" y="170" width="260" height="92" class="box" />
+        <text x="1240" y="205" class="label">RESET_PICOC</text>
+        <text x="1240" y="228" class="sub">重建主 PicoC 实例</text>
+        <text x="1240" y="248" class="small">`:reset`</text>
+
+        <rect x="1110" y="330" width="260" height="92" class="box warn" />
+        <text x="1240" y="365" class="label">SYS_RESET</text>
+        <text x="1240" y="388" class="sub">NVIC SystemReset</text>
+        <text x="1240" y="408" class="small">`:RST`</text>
+
+        <!-- Arrows -->
+        <path d="M 320 216 L 380 136" class="line" />
+        <text x="340" y="160" class="flowtag">:Rice / MSG_RICE_ENABLE</text>
+
+        <path d="M 320 202 L 380 202" class="thin dashed" />
+        <text x="332" y="192" class="flowtag">桥接转发</text>
+
+        <path d="M 505 182 L 505 250" class="line" />
+        <text x="520" y="228" class="flowtag">:load</text>
+
+        <path d="M 630 136 L 700 160" class="line" />
+        <text x="640" y="120" class="flowtag">命中断点 / 单步</text>
+
+        <path d="M 630 136 L 700 326" class="line" />
+        <text x="655" y="232" class="flowtag">`:end` -> 执行</text>
+
+        <path d="M 860 290 L 860 220" class="line" />
+        <text x="875" y="258" class="flowtag">返回 REPL</text>
+
+        <path d="M 1020 160 L 1110 216" class="line" />
+        <text x="1050" y="154" class="flowtag">`:reset`</text>
+
+        <path d="M 1020 330 L 1110 376" class="line" />
+        <text x="1046" y="334" class="flowtag">`:RST`</text>
+
+        <path d="M 1240 262 L 1240 330" class="thin dashed" />
+        <text x="1258" y="304" class="flowtag">系统重启</text>
+
+        <path d="M 860 400 C 860 470, 560 470, 505 342" class="line" />
+        <text x="690" y="468" class="flowtag">LOAD 完成后回 REPL</text>
+
+        <path d="M 860 220 C 860 280, 1010 300, 1110 216" class="thin dashed" />
+        <text x="960" y="270" class="flowtag">调试命令循环后返回</text>
+
+        <!-- Legend -->
+        <g class="legend">
+          <rect x="70" y="510" width="1320" height="300" rx="14" ry="14" fill="#f8fafc" stroke="#e2e8f0" />
+          <text x="96" y="548" style="font-size:16px; font-weight:700; fill:#182230;">说明</text>
+          <text x="96" y="580">1. 默认启动先停在 BRIDGE，不是直接进入 REPL。</text>
+          <text x="96" y="612">2. `:Rice` 只负责把解释器任务唤醒，并切换到 REPL。</text>
+          <text x="96" y="644">3. `:load` 只进入上传收集阶段，真正执行发生在 `:end` 之后。</text>
+          <text x="96" y="676">4. 调试停住时，输入消费权转给 `picocTask`，避免 serialTask / udpTask 抢读。</text>
+          <text x="96" y="708">5. `:abort` 不是硬杀任务，而是设置 `AbortRequested`，由解释器自己退出。</text>
+        </g>
+      </svg>
+    </section>
+
+    <section>
+      <h2>2. 数据流动图</h2>
+      <p class="desc">展示串口、UDP、队列、解释器和输出链路之间的数据怎么走。</p>
+      <svg viewBox="0 0 1500 1080" role="img" aria-label="数据流动图">
+        <defs>
+          <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#39485d"></path>
+          </marker>
+        </defs>
+
+        <style>
+          .line2 { stroke: #39485d; stroke-width: 2.2; fill: none; marker-end: url(#arrow2); }
+          .note { font-size: 12px; fill: #475569; font-weight: 600; }
+        </style>
+
+        <text x="750" y="44" class="label" style="font-size:22px;">RICE v2 数据流动</text>
+        <text x="750" y="68" class="sub">从硬件中断到任务队列，再到 PicoC 执行和串口 / UDP 输出</text>
+
+        <!-- Column headers -->
+        <rect x="62" y="98" width="260" height="68" class="box accent" />
+        <text x="192" y="137" class="label">串口输入路径</text>
+        <rect x="372" y="98" width="260" height="68" class="box teal" />
+        <text x="502" y="137" class="label">UDP 输入路径</text>
+        <rect x="682" y="98" width="260" height="68" class="box" />
+        <text x="812" y="137" class="label">协议 / 状态机</text>
+        <rect x="992" y="98" width="260" height="68" class="box warn" />
+        <text x="1122" y="137" class="label">任务间消息</text>
+        <rect x="1302" y="98" width="136" height="68" class="box" />
+        <text x="1370" y="137" class="label">输出</text>
+
+        <!-- Serial path -->
+        <rect x="62" y="210" width="260" height="92" class="box accent" />
+        <text x="192" y="242" class="label">USART1 + DMA</text>
+        <text x="192" y="266" class="sub">rx_dma_buffer 1024</text>
+
+        <rect x="62" y="352" width="260" height="92" class="box accent" />
+        <text x="192" y="384" class="label">RxEvent ISR</text>
+        <text x="192" y="408" class="sub">拷贝到 rx_ring 8192</text>
+
+        <rect x="62" y="494" width="260" height="92" class="box accent" />
+        <text x="192" y="526" class="label">serialTask</text>
+        <text x="192" y="550" class="sub">SerialApp_Read()</text>
+
+        <rect x="62" y="636" width="260" height="112" class="box" />
+        <text x="192" y="670" class="label">PicocApp_ProcessChars()</text>
+        <text x="192" y="696" class="sub">REPL / LOAD / 命令解析</text>
+        <text x="192" y="720" class="small">source_buffer / load_buffer</text>
+
+        <!-- UDP path -->
+        <rect x="372" y="210" width="260" height="92" class="box teal" />
+        <text x="502" y="242" class="label">CH394Q UDP Socket</text>
+        <text x="502" y="266" class="sub">网络包输入</text>
+
+        <rect x="372" y="352" width="260" height="92" class="box teal" />
+        <text x="502" y="384" class="label">udpTask</text>
+        <text x="502" y="408" class="sub">收包 / 发包 / 切换通道</text>
+
+        <rect x="372" y="494" width="260" height="92" class="box teal" />
+        <text x="502" y="526" class="label">UDP debug ring</text>
+        <text x="502" y="550" class="sub">仅调试停住时输入</text>
+
+        <!-- Parser / state machine -->
+        <rect x="682" y="210" width="260" height="92" class="box" />
+        <text x="812" y="242" class="label">PicocApp 解析层</text>
+        <text x="812" y="266" class="sub">:Rice / :load / :abort / :reset</text>
+
+        <rect x="682" y="352" width="260" height="92" class="box" />
+        <text x="812" y="384" class="label">模式机</text>
+        <text x="812" y="408" class="sub">BRIDGE / REPL / LOAD / DRAIN</text>
+
+        <rect x="682" y="494" width="260" height="92" class="box warn" />
+        <text x="812" y="526" class="label">调试命令</text>
+        <text x="812" y="550" class="sub">:cont / :step / :eval / :vars / :set</text>
+
+        <rect x="682" y="636" width="260" height="92" class="box teal" />
+        <text x="812" y="668" class="label">TaskMsg</text>
+        <text x="812" y="692" class="sub">uartQuene / udpQuene</text>
+
+        <!-- Execution -->
+        <rect x="992" y="210" width="260" height="92" class="box warn" />
+        <text x="1122" y="242" class="label">picocTask</text>
+        <text x="1122" y="266" class="sub">执行 / 调试 / 重置</text>
+
+        <rect x="992" y="352" width="260" height="92" class="box" />
+        <text x="1122" y="384" class="label">PicoC core</text>
+        <text x="1122" y="408" class="sub">parse / heap / variables</text>
+
+        <rect x="992" y="494" width="260" height="92" class="box" />
+        <text x="1122" y="526" class="label">Platform layer</text>
+        <text x="1122" y="550" class="sub">getchar / putchar / exit</text>
+
+        <rect x="992" y="636" width="260" height="92" class="box" />
+        <text x="1122" y="668" class="label">AbortRequested</text>
+        <text x="1122" y="692" class="sub">协作式中断退出</text>
+
+        <!-- Output -->
+        <rect x="1302" y="210" width="136" height="92" class="box accent" />
+        <text x="1370" y="242" class="label">tx_ring</text>
+        <text x="1370" y="266" class="sub">UART 输出</text>
+
+        <rect x="1302" y="352" width="136" height="92" class="box teal" />
+        <text x="1370" y="384" class="label">udpQuene</text>
+        <text x="1370" y="408" class="sub">UDP 输出</text>
+
+        <rect x="1302" y="494" width="136" height="92" class="box accent" />
+        <text x="1370" y="526" class="label">USART1</text>
+        <text x="1370" y="550" class="sub">串口终端</text>
+
+        <rect x="1302" y="636" width="136" height="92" class="box teal" />
+        <text x="1370" y="668" class="label">CH394Q</text>
+        <text x="1370" y="692" class="sub">UDP 发送</text>
+
+        <!-- Serial arrows -->
+        <path d="M 192 302 L 192 352" class="line2" />
+        <text x="210" y="336" class="note">HAL_UARTEx_RxEventCallback</text>
+
+        <path d="M 192 444 L 192 494" class="line2" />
+        <text x="210" y="478" class="note">唤醒 serialTask</text>
+
+        <path d="M 322 540 L 682 278" class="line2" />
+        <text x="440" y="418" class="note">SerialApp_Read()</text>
+
+        <path d="M 322 694 L 682 256" class="line2" />
+        <text x="448" y="578" class="note">:Rice / 普通行 / 协议命令</text>
+
+        <!-- UDP arrows -->
+        <path d="M 502 302 L 502 352" class="line2" />
+        <text x="520" y="336" class="note">收包事件</text>
+
+        <path d="M 502 444 L 502 494" class="line2" />
+        <text x="520" y="478" class="note">调试输入缓冲</text>
+
+        <path d="M 632 398 L 682 398" class="line2" />
+        <text x="642" y="386" class="note">UDP 输入解析</text>
+
+        <path d="M 632 520 L 682 520" class="line2" />
+        <text x="644" y="508" class="note">debug 命令 / 通道切换</text>
+
+        <!-- Parser arrows -->
+        <path d="M 812 302 L 812 352" class="line2" />
+        <text x="828" y="336" class="note">状态推进</text>
+
+        <path d="M 812 444 L 812 494" class="line2" />
+        <text x="828" y="478" class="note">调试命令分流</text>
+
+        <path d="M 812 586 L 812 636" class="line2" />
+        <text x="828" y="620" class="note">构造 TaskMsg</text>
+
+        <!-- Queue to execution -->
+        <path d="M 942 682 L 992 256" class="line2" />
+        <text x="940" y="558" class="note">uartQuene -> picocTask</text>
+
+        <path d="M 942 682 L 1122 682" class="line2" />
+        <text x="982" y="666" class="note">等待执行 / 阻塞读取</text>
+
+        <path d="M 1122 302 L 1122 352" class="line2" />
+        <text x="1140" y="336" class="note">PicocParse / CallMain</text>
+
+        <path d="M 1122 444 L 1122 494" class="line2" />
+        <text x="1140" y="478" class="note">PlatformPutc / getchar</text>
+
+        <path d="M 1122 586 L 1122 636" class="line2" />
+        <text x="1140" y="620" class="note">AbortRequested 检查</text>
+
+        <!-- Output arrows -->
+        <path d="M 1252 256 L 1302 256" class="line2" />
+        <text x="1260" y="244" class="note">UART 输出缓冲</text>
+
+        <path d="M 1252 398 L 1302 398" class="line2" />
+        <text x="1260" y="386" class="note">UDP 输出队列</text>
+
+        <path d="M 1370 302 L 1370 494" class="line2" />
+        <text x="1388" y="412" class="note">串口终端</text>
+
+        <path d="M 1370 444 L 1370 636" class="line2" />
+        <text x="1388" y="560" class="note">UDP 对端</text>
+
+        <!-- Cross-links for responses -->
+        <path d="M 1122 210 C 1122 180, 860 180, 812 210" class="line2" />
+        <text x="954" y="176" class="note">`:ok` / `:pong` / `:err` 等响应</text>
+
+        <path d="M 1122 304 C 1122 330, 500 330, 502 304" class="line2" />
+        <text x="720" y="318" class="note">调试停住时，输入直接给 picocTask</text>
+
+        <!-- Footer note -->
+        <rect x="62" y="782" width="1376" height="204" rx="14" ry="14" fill="#f8fafc" stroke="#e2e8f0" />
+        <text x="92" y="818" style="font-size:16px; font-weight:700; fill:#182230;">读图提示</text>
+        <text x="92" y="850">1. 串口数据先进入 DMA / rx_ring，再由 serialTask 做协议解析。</text>
+        <text x="92" y="880">2. UDP 数据在 udpTask 里既能直接转发，也能在调试模式下进入 UDP debug ring。</text>
+        <text x="92" y="910">3. `TaskMsg` 只传控制意图和短行文本，大脚本内容保存在 `load_buffer` 里。</text>
+        <text x="92" y="940">4. PicoC 输出走统一平台层，最后再按活动通道写回串口或 UDP。</text>
+        <text x="92" y="970">5. `:abort` 和断点停住都属于协作式控制，核心不是抢占，而是状态协商。</text>
+      </svg>
+    </section>
+  </div>
+</body>
+</html>

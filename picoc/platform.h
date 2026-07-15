@@ -42,7 +42,7 @@
 
 /* 交互模式提示符 */
 #define INTERACTIVE_PROMPT_START "RICE " PICOC_VERSION " -- Runtime Interactive C Environment\n"
-#define INTERACTIVE_PROMPT_STATEMENT "picoc> "
+#define INTERACTIVE_PROMPT_STATEMENT "Rice> "
 #define INTERACTIVE_PROMPT_LINE "     > "
 
 /* host platform includes */
