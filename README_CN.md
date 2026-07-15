@@ -9,133 +9,210 @@ RICE v2 是运行在 STM32H750VBTx 上的交互式 C 环境。项目将
 ## 硬件与运行时
 
 - MCU：STM32H750VBTx，Cortex-M7，最高 480 MHz
-- 串口：USART1，115200 波特率，8 数据位、无校验、1 停止位（115200 8N1）
-- 串口引脚：PA9（TX）、PA10（RX）
+- 串口：USART1，PA9（TX）和 PA10（RX），115200 波特率、8 数据位、无校验、1 停止位（8N1）
 - RTOS：FreeRTOS CMSIS-RTOS v2，内核版本 10.6.2
 - 网络：CH394Q（SPI4），使用 UDP socket 0
 - CH394Q 默认地址：`192.168.1.200:1000`
 - UDP 默认对端：`192.168.1.100:1000`
 
-默认 IP 和端口定义在 `Core/Src/CH394Q_NET.c`，如需更换网络请修改该文件。
+默认网络参数定义在 `Core/Src/CH394Q_NET.c`。
 
-## 启动行为
+## 完整串口使用流程
 
-设备**不会**上电后直接进入 C REPL。HAL 和 FreeRTOS 初始化完成后，系统先
-进入 UDP 桥接模式并输出：
+以下流程从干净的代码仓库开始，一直到执行和调试 C 脚本。命令区分大小写，且每条
+命令都必须以终端配置的行结束符发送。
+
+### 1. 编译与烧录
+
+固件只能通过 Keil MDK 编译，项目不提供受支持的命令行构建方式。
+
+1. 在 Keil MDK 中打开 `MDK-ARM/UART_DMA_H750.uvprojx`。
+2. 按 **F7** 编译。
+3. 通过 ST-Link 连接开发板并烧录生成的镜像。
+4. 使用串口终端连接 USART1，设置为 **115200、8 数据位、无校验、1 停止位**。发送
+   行结束符设为 LF 或 CRLF；若终端会导致键入字符显示两次，请关闭本地回显。
+
+CubeMX 工程文件为 `UART_DMA_H750.ioc`。重新生成 CubeMX 代码可能覆盖
+`Core/Src` 和 `Core/Inc` 中的 HAL 文件。
+
+### 2. 激活 REPL
+
+设备上电后先进入 UDP 桥接模式，而不是直接进入解释器：
 
 ```text
 === UDP Bridge Ready ===
 ```
 
-桥接模式下，USART1 收到的完整行会发送给 UDP 对端，收到的 UDP 数据报会转发
-到 USART1。此时 `picocTask` 已创建但处于挂起状态。
+通过 USART1 发送完整的一行 `:Rice`。当前通道随后输出 RICE 横幅和 `Rice> ` 提示符：
 
-通过 USART1 发送完整的一行 `:Rice`，可激活串口 REPL；通过 UDP 数据报发送
-`:Rice`，可激活 UDP REPL。激活后，当前通道会收到 `Rice> ` 提示符及所有解释器输出。
+```text
+:Rice
+RICE <version> -- Runtime Interactive C Environment
+Rice>
+```
 
-## 编译与烧录
+只有看到提示符后才能发送 C 代码。桥接模式下，普通串口行会转发到配置的 UDP 对端，
+不会被当作 PicoC 输入。
 
-项目没有受支持的命令行固件构建流程，请使用 Keil MDK：
+### 3. 交互执行 C 代码
 
-1. 打开 `MDK-ARM/UART_DMA_H750.uvprojx`。
-2. 按 **F7** 编译。
-3. 使用 ST-Link 烧录。
-4. 用串口终端连接 USART1，配置为 115200 8N1。
-
-CubeMX 工程文件为 `UART_DMA_H750.ioc`。重新生成代码可能覆盖
-`Core/Src` 和 `Core/Inc` 中的 HAL 文件，请注意保留应用层接口和修改。
-
-## REPL 交互
-
-发送 `:Rice` 后即可输入 C 语句或表达式。完整语句会进入 `picocTask` 执行，
-未闭合的多行代码会使用续行提示符。
+输入完整的语句或表达式后按 Enter。表达式会自动打印结果。若代码块尚未闭合，提示符
+会变成 `     > `，直到花括号、方括号、圆括号、字符串和注释全部闭合。
 
 ```text
 Rice> int x = 42;
 Rice> x + 5
 47
 Rice> for (int i = 0; i < 3; i++) {
-     >   printf("i=%d\\n", i);
+     >     printf("i=%d\n", i);
      > }
 i=0
 i=1
 i=2
+Rice>
 ```
 
-目标没有文件系统，需要主机文件的 `#include` 或文件 API 会返回错误。完整脚本
-应使用上传协议发送。
+REPL 中声明的变量会保留在 REPL 解释器实例中，直到发送 `:reset` 或重启开发板。
+单条进入任务队列的 REPL 源码消息最多为 255 字节，因此单次提交应控制在此范围内。
 
-## 上传脚本
+### 4. 上传并运行完整脚本
 
-`:load` 进入加载模式并显示 `load> `。源码会累积到 8 KiB 缓冲区，收到 `:end`
-后执行。上传脚本在独立的 PicoC 实例中运行，调试器使用文件名 `serial_load`
-报告行号。
+多行程序应使用加载模式。`:load` 会清除上一次上传内容，返回 `:ok` 并将提示符改为
+`load> `。逐行发送源码，最后单独发送一行 `:end`。源码保存在 8 KiB 缓冲区中，并在
+独立的 PicoC 实例 `serial_load` 中运行。
 
 ```text
-:load
-#include <stdio.h>
-int main(void) {
-    printf("hello\\n");
-    return 0;
-}
-:end
+Rice> :load
+:ok
+load> #include <stdio.h>
+load> int main(void)
+load> {
+load>     int total = 0;
+load>     for (int i = 1; i <= 5; i++) {
+load>         total += i;
+load>     }
+load>     printf("total=%d\n", total);
+load>     return 0;
+load> }
+load> :end
+total=15
+:ok ready
+Rice>
 ```
 
-加载期间发送 `:abort` 会丢弃当前缓冲区。`:load <bytes>` 可选参数用于预检查，
-大于 8 KiB 的值会在开始上传前被拒绝。
+存在 `main()` 时会自动调用它。复制文件时应保留空行，因为调试器按原始上传行号报告
+位置。`:load <bytes>` 仅用于大小预检查；数值大于 8191 时会返回 `:err buffer full`。
+在发送 `:end` 前发送 `:abort` 可丢弃上传内容并回到 `Rice> `。
 
-## 命令协议
+### 5. 设置断点并调试上传脚本
 
-命令按行解析并区分大小写，设备响应同样按行发送。
-
-| 主机命令 | 作用 |
-| --- | --- |
-| `:Rice` | 离开桥接模式，激活当前通道的 REPL |
-| `:load [bytes]` | 进入脚本上传模式 |
-| `:end` | 执行已上传脚本 |
-| `:abort` | 请求协作式中断脚本，或取消上传 |
-| `:ping` | 立即返回心跳 `:pong` |
-| `:reset` | 重新初始化 PicoC，清除变量和断点 |
-| `:RST` | 通过 `HAL_NVIC_SystemReset()` 复位 STM32 |
-| `:bkpt <file> <line>` | 设置断点 |
-| `:bkptclear <file> <line>` | 清除断点 |
-| `:debug serial` | 将调试 I/O 切换到 USART1 |
-| `:debug udp` | 将调试 I/O 切换到 UDP |
-
-常见响应包括 `:ok`、`:ok ready`、`:err <message>`、`:pong`、
-`:break <file> <line> <column>`、`:step <file> <line> <column>`，以及位于
-`:vars` 和 `:ok vars` 之间逐行发送的 `:var ...` 记录。
-
-## 调试
-
-可以在加载脚本前或之后设置断点。程序暂停时，调试器会直接消费以下命令，
-不会经过普通源码消息队列：
+断点的文件名必须为 `serial_load`，行号从 1 开始。可以在 `:load` 前设置，也可以在脚本
+暂停时设置。下列完整示例会在第 5 行的 `value` 自增语句处暂停：
 
 ```text
-:bkpt serial_load 5
-:load
-...
-:end
+Rice> :bkpt serial_load 5
+:ok bkpt
+Rice> :load
+:ok
+load> #include <stdio.h>
+load> int main(void)
+load> {
+load>     int value = 41;
+load>     value = value + 1;
+load>     printf("value=%d\n", value);
+load>     return 0;
+load> }
+load> :end
 :break serial_load 5 0
 :vars
-:eval x + 1
-:set x 100
+:var value 41
+:ok vars
+:eval value + 1
+42
+:set value 100
+:ok set
 :step
+:step serial_load 6 0
 :cont
+value=100
+:ok ready
+Rice>
 ```
 
-`:step` 执行一条语句，`:eval <expression>` 在暂停作用域求值，`:vars` 列出可见
-变量，`:set <name> <value>` 修改暂停中的变量，`:cont` 继续执行直到下一个断点
-或正常结束。
+暂停期间，解释器直接消费下列命令。不要在此时发送普通 C 源码；应先使用 `:cont` 完成
+脚本，或用 `:abort` 停止脚本。
 
-## 协作式中断
+| 命令 | 暂停时的作用 |
+| --- | --- |
+| `:cont` | 继续执行，直至下一个断点或程序结束。 |
+| `:step` | 执行一条语句后再次暂停。 |
+| `:eval <expression>` | 在当前作用域中求值。 |
+| `:vars` | 逐行输出可见变量的 `:var ...` 记录，最后输出 `:ok vars`。 |
+| `:set <name> <value>` | 修改可见变量。 |
+| `:bkpt <file> <line>` | 添加断点。 |
+| `:bkptclear <file> <line>` | 移除断点。 |
+| `:abort` | 停止暂停中的脚本并返回 REPL。 |
 
-脚本运行期间，`:abort` 由高优先级 `serialTask` 处理。PicoC 循环检查点和阻塞式
-控制台输入会检查 `AbortRequested`，随后解释器在 **picocTask 自身内部**通过
-`setjmp/longjmp` 展开调用栈并返回提示符，不会跨任务执行 `longjmp`。
+一次上传执行结束后，为该上传配置的断点会被清除。
 
-`:ping` 在脚本执行期间仍然响应。该机制是协作式的：如果代码长期不经过 PicoC
-检查点，就不能保证立即中断。
+### 6. 中断、连通性检查与复位
+
+以下是中断死循环的示例：
+
+```text
+Rice> while (1) { }
+Rice> :ping
+:pong
+Rice> :abort
+```
+
+`:abort` 是协作式中断。PicoC 在循环体和阻塞式控制台输入处检查中断请求，因此普通的
+`while`、`for` 和 `do` 循环无需复位开发板即可中断。长期不经过 PicoC 检查点的代码
+不能保证立即被中断。`:ping` 由串口任务处理，脚本执行期间仍可响应。
+
+`:reset` 会重新创建 REPL PicoC 实例、丢弃正在上传的内容并清除其中的断点。只有需要
+完全复位 MCU 时才使用 `:RST`；设备会回到 UDP 桥接模式，之后需要再次发送 `:Rice`。
+
+## UDP 流程与通道切换
+
+启动后，串口输入和 UDP 数据会双向桥接。若要使 UDP 成为解释器通道，请向设备发送内容
+为 `:Rice` 的 UDP 数据报。该发送方会收到 RICE 横幅、`Rice> ` 提示符和 `:ok rice`；
+之后的 REPL、上传、调试及输出都通过 UDP 进行。
+
+使用以下命令切换活动解释器通道。`:ok debug ...` 会发送到旧通道，新的提示符出现在
+新通道。
+
+```text
+:debug udp
+:debug serial
+```
+
+串口活跃时，除 `:debug udp` 外的 UDP 输入都会被忽略；UDP 活跃时，除 `:debug serial`
+外的串口输入都会被忽略。若默认 IP 不适合当前网络，应先修改 CH394Q 地址和 UDP 对端。
+
+## 命令速查
+
+| 命令 | 作用 | 正常响应 |
+| --- | --- | --- |
+| `:Rice` | 离开桥接模式，激活当前通道的 REPL。 | RICE 横幅和 `Rice> `；UDP 还会发送 `:ok rice`。 |
+| `:load [bytes]` | 开始新的脚本上传。 | `:ok`，随后是 `load> `。 |
+| `:end` | 执行已累积的上传脚本。 | 程序输出，随后为 `:ok ready`。 |
+| `:abort` | 取消上传或协作式中断运行中的代码。 | 取消上传时为 `:err load cancelled`。 |
+| `:ping` | 检查连通性。 | `:pong`。 |
+| `:reset` | 重建 REPL 解释器并清除状态。 | `:ok`。 |
+| `:RST` | 通过 `HAL_NVIC_SystemReset()` 复位 STM32。 | `:ok`，随后是启动输出。 |
+| `:bkpt <file> <line>` | 设置断点。 | `:ok bkpt`。 |
+| `:bkptclear <file> <line>` | 清除断点。 | `:ok bkptclear`。 |
+| `:debug serial` | 将 USART1 设为活动 I/O。 | 旧通道收到 `:ok debug serial`。 |
+| `:debug udp` | 将 UDP 设为活动 I/O。 | 旧通道收到 `:ok debug udp`。 |
+
+## 限制
+
+- 目标没有文件系统，不支持读取主机文件的 `#include` 或文件 API；完整源码请通过
+  `:load` 传输。
+- 上传缓冲区为 8 KiB，任务消息最多携带 255 字节源码文本。
+- FreeRTOS `heap_4` 配置为 72 KiB，PicoC 另有独立的 64 KiB 堆。
+- 缓冲区、任务栈和网络参数均为静态配置；增加脚本复杂度前应评估资源使用情况。
 
 ## 运行时架构
 
@@ -152,12 +229,10 @@ rx_ring[8192] --serialTask--> PicocApp_ProcessChars()
              picocTask                         udpTask
 ```
 
-- `serialTask`：高优先级，4 KiB 栈；读取 UART 并解析协议行。
-- `picocTask`：普通优先级，32 KiB 栈；执行 PicoC 和调试器，启动时挂起。
+- `serialTask`：高优先级，4 KiB 栈；读取串口输入并解析协议行。
+- `picocTask`：普通优先级，32 KiB 栈；执行 PicoC 和调试器；启动时挂起，收到 `:Rice`
+  后恢复运行。
 - `udpTask`：高于普通优先级，8 KiB 栈；处理 CH394Q UDP 收发。
-- FreeRTOS `heap_4`：配置堆 72 KiB；PicoC 另有独立的 64 KiB 堆。
-- `TaskMsg` 数据区上限为 256 字节。单条 REPL 语句应控制在此范围内，解析器最多
-  将 255 个源码字节复制到任务消息中。
 
 ## 仓库结构
 
@@ -170,19 +245,8 @@ MDK-ARM/              Keil 工程、启动代码和链接配置
 MIGRATION.md          移植流程与文件依赖矩阵
 ```
 
-代码按以下层次组织：
-
-1. `picoc/*.c`：可复用的解释器核心，移植硬件时不应修改。
-2. `picoc/platform/*`：目标平台 I/O 和外设绑定。
-3. `Core/Src/*_app.c`：REPL、协议解析、DMA 环形缓冲集成。
-4. CubeMX/HAL 文件：芯片相关的启动、时钟、外设和中断实现。
-
-## 已知限制
-
-- 固件仅支持使用 Keil MDK 编译和烧录。
-- 嵌入式目标没有基于文件系统的 `#include` 或文件执行能力。
-- 缓冲区、任务栈和网络参数均为静态配置；增加脚本复杂度前应重新评估资源。
-- 仓库包含 CubeMX 生成的 HAL 文件，重新生成时必须保持应用层接口不变。
+代码按层次组织：`picoc/*.c` 是可复用的解释器核心；`picoc/platform/*` 包含平台绑定；
+`Core/Src/*_app.c` 负责应用协议；CubeMX/HAL 文件负责芯片启动和驱动。
 
 ## 许可证
 
